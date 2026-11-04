@@ -1,6 +1,23 @@
 {
  "fetched": "2026-10-24",
+ "fetched_note": "anthropic.claude-haiku-5-5 added 2026-11-04 from the same API and region",
  "models": {
+  "anthropic.claude-haiku-5-5": {
+   "global": {
+    "cache_read": 0.01,
+    "cache_write_1h": 0.2,
+    "cache_write_5m": 0.125,
+    "input": 0.1,
+    "output": 0.5
+   },
+   "regional": {
+    "cache_read": 0.011,
+    "cache_write_1h": 0.22,
+    "cache_write_5m": 0.1375,
+    "input": 0.11,
+    "output": 0.55
+   }
+  },
   "anthropic.claude-opus-4-8": {
    "global": {
     "cache_read": 0.5,

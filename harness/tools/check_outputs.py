@@ -16,7 +16,13 @@ and punctuation were dropped too, because PDF extraction breaks words at line en
 quote whose letters and digits match in order points at exactly the right text.
 quote_norm (the middle form) is kept for comparison.
 
-Usage: python3 check_outputs.py inputs.csv outputs.csv
+--task abstract-facts checks validity only, by code: the row parses and fits
+schemas/abstract_output.schema.json (one about fact, at most two findings, 250 characters a
+fact, 200 a quote), its unit_id is an input, and every input has one row. Quotes there are
+optional and not scored: one not found in the abstract is printed as a note and counted in the
+last line, but doesn't fail the row.
+
+Usage: python3 check_outputs.py inputs.csv outputs.csv [--task file-summary|abstract-facts]
 """
 import csv
 import json
@@ -53,6 +59,68 @@ def quote_found(q, source):
     return bool(k) and k in quote_skeleton(source)
 
 
+ABSTRACT_SCHEMA = json.loads((Path(__file__).resolve().parent.parent / "schemas" / "abstract_output.schema.json").read_text())
+# Validity doesn't depend on the optional, unscored quote's length: that check is dropped here.
+VALIDITY_SCHEMA = json.loads(json.dumps(ABSTRACT_SCHEMA))
+VALIDITY_SCHEMA["$defs"]["fact"]["properties"]["quote"].pop("maxLength")
+ABSTRACT_LIST_COLUMNS = ["about", "findings"]
+
+
+def parse_abstract_row(row):
+    """An abstract-task output row from CSV, with its JSON cells decoded; raises on bad JSON."""
+    out = dict(row)
+    for col in ABSTRACT_LIST_COLUMNS:
+        out[col] = json.loads(out[col])
+    return out
+
+
+def abstract_problems(out):
+    """Validity of one parsed abstract-task row, by code: the schema (one about fact, at most two
+    findings, 250 characters a fact). Quotes are optional and not scored, so their length isn't."""
+    try:
+        jsonschema.validate(out, VALIDITY_SCHEMA)
+        return []
+    except jsonschema.ValidationError as e:
+        return [f"schema: {e.message}"[:160]]
+
+
+def abstract_quotes(out, abstract):
+    """(quotes given, quotes not found in the abstract). A side metric: quotes are not scored."""
+    facts = [out.get("about")] + list(out.get("findings") or [])
+    given = [f["quote"] for f in facts if isinstance(f, dict) and isinstance(f.get("quote"), str)]
+    return given, [q for q in given if not quote_found(q, abstract)]
+
+
+def main_abstract(inputs_path, outputs_path):
+    csv.field_size_limit(sys.maxsize)
+    inputs = {r["unit_id"]: r for r in csv.DictReader(open(inputs_path, newline=""))}
+    seen, failed, quotes, misses = set(), 0, 0, 0
+    for row in csv.DictReader(open(outputs_path, newline="")):
+        uid, problems, notes = row.get("unit_id", ""), [], []
+        try:
+            out = parse_abstract_row(row)
+            problems += abstract_problems(out)
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            out, problems = None, [f"unparseable: {e}"[:160]]
+        if uid not in inputs:
+            problems.append("unit_id not in inputs")
+        elif uid in seen:
+            problems.append("duplicate unit_id")
+        elif out is not None:
+            given, missing = abstract_quotes(out, inputs[uid]["abstract"])
+            quotes, misses = quotes + len(given), misses + len(missing)
+            notes = [f"note: quote not found (not scored): {q[:60]!r}" for q in missing]
+        seen.add(uid)
+        failed += bool(problems)
+        print(("FAIL  " if problems else "PASS  ") + uid + "".join(f"\n      {p}" for p in problems + notes))
+    for uid in inputs.keys() - seen:
+        failed += 1
+        print(f"FAIL  {uid}\n      no output row")
+    print(f"\n{len(inputs) - failed if failed <= len(inputs) else 0}/{len(inputs)} input rows pass"
+          f"\n{quotes - misses}/{quotes} quotes found in their abstract (side metric, not scored)")
+    sys.exit(1 if failed else 0)
+
+
 def main(inputs_path, outputs_path):
     csv.field_size_limit(sys.maxsize)
     inputs = {r["unit_id"]: r for r in csv.DictReader(open(inputs_path, newline=""))}
@@ -85,6 +153,15 @@ def main(inputs_path, outputs_path):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
+    argv = sys.argv[1:]
+    task = "file-summary"
+    if "--task" in argv:
+        i = argv.index("--task")
+        task = argv[i + 1]
+        del argv[i:i + 2]
+    if len(argv) != 2 or task not in ("file-summary", "abstract-facts"):
         sys.exit(__doc__)
-    main(*sys.argv[1:])
+    if task == "abstract-facts":
+        main_abstract(*argv)
+    else:
+        main(*argv)

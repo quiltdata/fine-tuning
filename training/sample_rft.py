@@ -6,7 +6,11 @@ inputs with the summarizer prompt, thinking off, json_schema output, n samples a
 and writes one JSON line per batch: its prefix and file type, unit ids, and every sample's raw text.
 Selection happens afterwards, by code (select_rft.py).
 
+--task and --batch-size select the task as in run_model.py (tasks.py); the job's code channel
+carries the task's prompt, examples and schema.
+
 Usage: python3 sample_rft.py inputs.csv samples.jsonl [--n 4] [--temperature 0.8] [--workers 64]
+                             [--task NAME] [--batch-size N]
 """
 import argparse
 import csv
@@ -18,15 +22,15 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "tools"))
-from run_model import API_SCHEMA, SYSTEM, batches, user_message  # noqa: E402
+import run_model as rm  # noqa: E402
 
 URL = "http://localhost:8000/v1/chat/completions"
 
 
 def sample(key, rows, n, temperature):
     body = {"model": "lightning", "max_tokens": 4096, "n": n, "temperature": temperature,
-            "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user_message(rows)}],
-            "response_format": {"type": "json_schema", "json_schema": {"name": "rows", "schema": API_SCHEMA}},
+            "messages": [{"role": "system", "content": rm.SYSTEM}, {"role": "user", "content": rm.user_message(rows)}],
+            "response_format": {"type": "json_schema", "json_schema": {"name": "rows", "schema": rm.API_SCHEMA}},
             "chat_template_kwargs": {"enable_thinking": False}}
     rec = {"prefix": key[0], "file_type": key[1], "unit_ids": [r["unit_id"] for r in rows], "samples": [], "error": ""}
     try:
@@ -47,9 +51,12 @@ def main():
     ap.add_argument("--n", type=int, default=4)
     ap.add_argument("--temperature", type=float, default=0.8)
     ap.add_argument("--workers", type=int, default=64)
+    ap.add_argument("--task", default="file-summary")
+    ap.add_argument("--batch-size", type=int)
     a = ap.parse_args()
+    rm.set_task(a.task)
     csv.field_size_limit(sys.maxsize)
-    work = batches(list(csv.DictReader(open(a.inputs, newline=""))))
+    work = rm.batches(list(csv.DictReader(open(a.inputs, newline=""))), size=a.batch_size)
     started = time.time()
     done = 0
     with ThreadPoolExecutor(a.workers) as pool, open(a.out, "w") as fh:

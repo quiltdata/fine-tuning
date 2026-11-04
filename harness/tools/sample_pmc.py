@@ -10,10 +10,14 @@ CANDIDATES, from further inventory parts if needed, until the target row count i
 --exclude takes articles.csv files of other sets; their PMCIDs (any version) are skipped,
 so a training set never shares an article with a test set.
 
-Writes objects.txt (for make_inputs.py) and articles.csv (one row per article:
-PMCID, license, title, units chosen).
+--articles-only (the abstract task) drops the supplement requirement: each kept article gives
+one unit, its JATS XML, and target_rows counts articles. make_abstracts.py reads the result;
+articles without a main abstract drop out there, so sample about 1% over the target.
 
-Usage: python3 sample_pmc.py <target_rows> <out_dir> [seed] [--exclude articles.csv ...]
+Writes objects.txt (for make_inputs.py) and articles.csv (one row per article:
+PMCID, version, license, title, units chosen, PMID).
+
+Usage: python3 sample_pmc.py <target_rows> <out_dir> [seed] [--exclude articles.csv ...] [--articles-only]
 """
 import argparse
 import csv
@@ -61,15 +65,17 @@ def metadata(key):
         return None
 
 
-def units(meta):
-    """S3 URIs to summarize for one article: its .txt and readable supplements."""
+def units(meta, articles_only=False):
+    """S3 URIs to summarize for one article: its .txt and readable supplements, or its XML alone."""
+    if articles_only:
+        return [meta["xml_url"].split("?")[0]] if meta.get("xml_url") else []
     txt = meta["text_url"].split("?")[0]
     supplements = [u.split("?")[0] for u in meta.get("media_urls") or []]
     supplements = [u for u in supplements if u.rsplit(".", 1)[-1].lower() in SUPPLEMENT_TYPES]
     return [txt] + supplements[:MAX_SUPPLEMENTS] if supplements else []
 
 
-def main(target_rows, out_dir, seed=20261024, exclude=()):
+def main(target_rows, out_dir, seed=20261024, exclude=(), articles_only=False):
     rng = random.Random(seed)
     skip = {r["pmcid"] for path in exclude for r in csv.DictReader(open(path, newline=""))}
     day, parts = inventory_parts(rng)
@@ -86,9 +92,10 @@ def main(target_rows, out_dir, seed=20261024, exclude=()):
             read += sum(1 for m in metas if m)
             for meta in metas:
                 if not meta or meta.get("license_code") not in TRAIN_LICENSES or not meta.get("is_pmc_openaccess") \
-                        or meta.get("is_retracted") or not meta.get("text_url") or meta.get("pmcid") in skip:
+                        or meta.get("is_retracted") or meta.get("pmcid") in skip \
+                        or not meta.get("xml_url" if articles_only else "text_url"):
                     continue
-                u = units(meta)
+                u = units(meta, articles_only)
                 if not u:
                     continue
                 kept.append((meta, u))
@@ -105,15 +112,16 @@ def main(target_rows, out_dir, seed=20261024, exclude=()):
         fh.write(f"# PMC summarizer set: {len(kept)} articles, {rows} units. Inventory {day}, parts {', '.join(used)}, seed {seed}.\n")
         if skip:
             fh.write(f"# Excluded {len(skip)} PMCIDs from: {', '.join(str(p) for p in exclude)}.\n")
-        fh.write("# Licenses CC BY or CC0, open access, not retracted; article .txt plus up to "
-                 f"{MAX_SUPPLEMENTS} readable supplements ({', '.join(sorted(SUPPLEMENT_TYPES))}).\n")
+        fh.write("# Licenses CC BY or CC0, open access, not retracted; " + (
+            "one unit per article, its JATS XML.\n" if articles_only else
+            f"article .txt plus up to {MAX_SUPPLEMENTS} readable supplements ({', '.join(sorted(SUPPLEMENT_TYPES))}).\n"))
         for _, u in kept:
             fh.write("\n".join(u) + "\n")
     with open(out / "articles.csv", "w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["pmcid", "version", "license_code", "title", "units"])
+        w.writerow(["pmcid", "version", "license_code", "title", "units", "pmid"])
         for meta, u in kept:
-            w.writerow([meta["pmcid"], meta.get("version"), meta["license_code"], meta.get("title"), len(u)])
+            w.writerow([meta["pmcid"], meta.get("version"), meta["license_code"], meta.get("title"), len(u), meta.get("pmid") or ""])
     print(f"{sampled} sampled, {read} read, {len(kept)} articles kept, {rows} units", file=sys.stderr)
 
 
@@ -123,5 +131,6 @@ if __name__ == "__main__":
     ap.add_argument("out_dir")
     ap.add_argument("seed", type=int, nargs="?", default=20261024)
     ap.add_argument("--exclude", nargs="+", default=[], help="articles.csv files whose PMCIDs to skip")
+    ap.add_argument("--articles-only", action="store_true", help="one unit per article (its XML); no supplements needed")
     a = ap.parse_args()
-    main(a.target_rows, a.out_dir, a.seed, a.exclude)
+    main(a.target_rows, a.out_dir, a.seed, a.exclude, a.articles_only)

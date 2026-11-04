@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "abstract_input.schema.json",
+  "title": "Abstract task input row",
+  "description": "One article's main abstract (make_abstracts.py). Stored as CSV; list and object cells hold JSON. The model sees only unit_id and abstract.",
+  "type": "object",
+  "required": ["unit_id", "pmcid", "pmid", "title", "journal", "jats_article_type", "pubmed_types", "structured", "headings",
+               "abstract_bytes", "truncated", "abstract", "protocol", "protocol_signals"],
+  "additionalProperties": false,
+  "properties": {
+    "unit_id": {"type": "string", "pattern": "^PMC[0-9]+\\.[0-9]+$", "description": "PMCID and version"},
+    "pmcid": {"type": "string"},
+    "pmid": {"type": "string", "description": "PubMed ID, empty if PubMed has none"},
+    "title": {"type": "string"},
+    "journal": {"type": "string"},
+    "jats_article_type": {"type": "string", "description": "the publisher's article-type; unreliable for protocols"},
+    "pubmed_types": {"type": "array", "items": {"type": "string"}, "description": "NLM publication types"},
+    "structured": {"type": "integer", "enum": [0, 1], "description": "the abstract has sections"},
+    "headings": {"type": "array", "items": {"type": "string"}, "description": "section titles, supplementary/graphical/key-points sections excluded"},
+    "abstract_bytes": {"type": "integer", "minimum": 1, "description": "UTF-8 bytes of the full counted text, before any truncation"},
+    "truncated": {"type": "integer", "enum": [0, 1], "description": "abstract was cut to fit 4,096 bytes"},
+    "abstract": {"type": "string", "minLength": 1, "description": "the text the model reads, at most 4,096 UTF-8 bytes"},
+    "protocol": {"type": "integer", "enum": [0, 1], "description": "a study protocol by any of the three signals"},
+    "protocol_signals": {
+      "type": "object",
+      "required": ["pubmed", "title", "headings"],
+      "properties": {"pubmed": {"type": "boolean"}, "title": {"type": "boolean"}, "headings": {"type": "boolean"}}
+    }
+  }
+}

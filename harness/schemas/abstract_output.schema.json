@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "abstract_output.schema.json",
+  "title": "Abstract task output row",
+  "description": "One abstract's key facts: what the study is, and its one or two main findings (none when the abstract reports no results). Each fact is in the model's own words, one claim, at most 250 characters; the quote is optional evidence, verbatim from the abstract, and not scored.",
+  "type": "object",
+  "required": ["unit_id", "about", "findings"],
+  "additionalProperties": false,
+  "$defs": {
+    "fact": {
+      "type": "object",
+      "required": ["fact"],
+      "additionalProperties": false,
+      "properties": {
+        "fact": {"type": "string", "minLength": 1, "maxLength": 250, "description": "one claim, in the model's own words"},
+        "quote": {"type": "string", "minLength": 1, "maxLength": 200, "description": "optional: verbatim from the abstract, supporting the fact"}
+      }
+    }
+  },
+  "properties": {
+    "unit_id": {"type": "string", "description": "copied from the input row"},
+    "about": {"$ref": "#/$defs/fact", "description": "what kind of study, on what system, to what end"},
+    "findings": {"type": "array", "maxItems": 2, "items": {"$ref": "#/$defs/fact"}, "description": "the main results, most important first; empty only when the abstract reports none"}
+  }
+}
