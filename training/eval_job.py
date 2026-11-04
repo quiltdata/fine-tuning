@@ -14,21 +14,43 @@ for rejection-sampling fine-tuning (4 at 0.8 for v2, 6 at 0.9 for v4-v6).
 --tp, --max-model-len and --per-file serve an NVFP4 export the way production does (one GPU,
 64K context) and send one document per call (whole PDFs).
 
+--task and --batch-size select the task (harness/tools/tasks.py); the job's code channel carries
+the harness tools plus that task's prompt, examples and schema.
+
 Usage: python3 eval_job.py <name-suffix> <s3-model-prefix> --inputs inputs.csv [--spot] [--region us-east-2]
-                           [--max-hours H] [--tp 4] [--max-model-len 32768] [--per-file]
+                           [--max-hours H] [--tp 4] [--max-model-len 32768] [--per-file] [--task NAME] [--batch-size N]
        python3 eval_job.py <name-suffix> <s3-model-prefix> --sample --train-inputs inputs.csv [--n 4] [--temperature 0.8]
 """
 import argparse
+import sys
 from pathlib import Path
 
 import boto3
 
 from config import ACCOUNT, PREFIX, ROLE, BASE_TAGS
 HARNESS = Path(__file__).resolve().parent.parent / "harness"
-CODE = ["tools/run_model.py", "tools/model_rates.json", "prompts/summarizer.md", "schemas/output.schema.json"]
+sys.path.insert(0, str(HARNESS / "tools"))
+import tasks  # noqa: E402
+
+TOOLS = ["tools/run_model.py", "tools/tasks.py", "tools/model_rates.json"]
 EVAL_CMD = """cd $C && python3 tools/run_model.py eligible_inputs.csv $O/run --model lightning --openai-url http://localhost:8000/v1 \\
-  --no-thinking --workers 64 --max-tokens 4096__PER_FILE__"""
-SAMPLE_CMD = """cd $C && python3 sample_rft.py train_inputs.csv $O/samples.jsonl --n __N__ --temperature __T__ --workers 64"""
+  --no-thinking --workers 64 --max-tokens 4096 --task __TASK____BATCH____PER_FILE__"""
+SAMPLE_CMD = """cd $C && python3 sample_rft.py train_inputs.csv $O/samples.jsonl --n __N__ --temperature __T__ --workers 64 \\
+  --task __TASK____BATCH__"""
+
+
+def code_files(task_name):
+    """Harness files the job needs: the tools, and the task's prompt, examples (if written) and schema."""
+    task = tasks.get(task_name, HARNESS)
+    missing = task.missing()
+    if missing:
+        raise SystemExit(f"task {task_name}: missing {', '.join(missing)}")
+    files = [f"prompts/{task.prompt}", f"schemas/{task.output_schema}"]
+    if task.examples and (HARNESS / "prompts" / task.examples).exists():
+        files.append(f"prompts/{task.examples}")
+    return TOOLS + files
+
+
 SCRIPT = r"""
 set -uo pipefail
 M=/opt/ml/input/data/model; C=/opt/ml/input/data/code; O=/opt/ml/model
@@ -70,6 +92,8 @@ def main():
     ap.add_argument("--tp", type=int, default=4, help="tensor-parallel size (1 for an NVFP4 export, as production)")
     ap.add_argument("--max-model-len", type=int, default=32768)
     ap.add_argument("--per-file", action="store_true", help="one row per call (whole documents)")
+    ap.add_argument("--task", default="file-summary", choices=sorted(tasks.TASKS))
+    ap.add_argument("--batch-size", type=int, help="abstract-facts: rows per call (default 10)")
     a = ap.parse_args()
     if a.sample and not a.train_inputs:
         ap.error("--sample needs --train-inputs")
@@ -80,15 +104,16 @@ def main():
     bucket = f"sagemaker-{a.region}-{ACCOUNT}"
     code_prefix = f"{PREFIX}/ingest/{name}/code/"
     s3 = boto3.client("s3", region_name=a.region)
-    for rel in CODE:
+    for rel in code_files(a.task):
         s3.upload_file(str(HARNESS / rel), bucket, code_prefix + rel)
     if a.sample:
         s3.upload_file(a.train_inputs, bucket, code_prefix + "train_inputs.csv")
+        s3.upload_file(str(Path(__file__).resolve().parent / "sample_rft.py"), bucket, code_prefix + "sample_rft.py")
     else:
         s3.upload_file(a.inputs, bucket, code_prefix + "eligible_inputs.csv")
-        s3.upload_file(str(Path(__file__).resolve().parent / "sample_rft.py"), bucket, code_prefix + "sample_rft.py")
-    command = SAMPLE_CMD.replace("__N__", str(a.n)).replace("__T__", str(a.temperature)) if a.sample else \
-        EVAL_CMD.replace("__PER_FILE__", " --per-file" if a.per_file else "")
+    batch = f" --batch-size {a.batch_size}" if a.batch_size else ""
+    command = (SAMPLE_CMD.replace("__N__", str(a.n)).replace("__T__", str(a.temperature)) if a.sample else
+               EVAL_CMD.replace("__PER_FILE__", " --per-file" if a.per_file else "")).replace("__TASK__", a.task).replace("__BATCH__", batch)
     script = SCRIPT.replace("__COMMAND__", command).replace("__TP__", str(a.tp)).replace("__MAXLEN__", str(a.max_model_len))
     s3.put_object(Bucket=bucket, Key=code_prefix + "run_eval.sh", Body=script.encode())  # arguments are capped at 256 chars
     image = f"763104351884.dkr.ecr.{a.region}.amazonaws.com/vllm:server-sagemaker-cuda-v2.2"

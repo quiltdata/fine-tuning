@@ -147,7 +147,11 @@ def main():
     ap.add_argument("--region", default="us-east-2")
     ap.add_argument("--workers", type=int, default=32)
     ap.add_argument("--reasoning-effort", default="low")
+    ap.add_argument("--task", default="file-summary", help="only file-summary so far")
     a = ap.parse_args()
+    if a.task != "file-summary":
+        sys.exit(f"select_rft.py selects file-summary rows only; reward-round selection for {a.task} isn't built yet "
+                 "(the abstract plan builds it only if SFT misses the bar)")
     if bool(a.facts) != bool(a.grades):
         sys.exit("--facts and --grades go together")
 

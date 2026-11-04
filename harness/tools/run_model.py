@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Run the summarizer on any Bedrock model or on a SageMaker endpoint (Lightning).
+"""Run a task on any Bedrock model or on a SageMaker endpoint (Lightning).
 
-Same task as run_claude.py: batches of one prefix and one file type, with
-prompts/summarizer.md as the system prompt and rows in schemas/output.schema.json.
+--task picks the task (tasks.py): its prompt and examples, output schema, what the model sees of
+each input row, and how rows are batched. The default, file-summary, is the earlier summarizer
+(batches of one prefix and one file type, prompts/summarizer.md, schemas/output.schema.json);
+abstract-facts is the abstract task (batches of --batch-size abstracts, default 10). run.json
+records the task with SHA-256 of its prompt, examples and schema.
 Each model gets the strongest structured output its server offers:
 
   bedrock    Converse with a forced tool whose input is the output table. If the model
@@ -31,12 +34,12 @@ sees the facts.
 
 Writes outputs.csv, calls.csv and run.json to out_dir, like run_claude.py.
 
-Usage: python3 run_model.py inputs.csv out_dir --model ID [--sagemaker [--no-thinking] | --chat [--service-tier T]
+Usage: python3 run_model.py inputs.csv out_dir --model ID [--task file-summary|abstract-facts] [--prompt FILE]
+                            [--batch-size N] [--sagemaker [--no-thinking] | --chat [--service-tier T]
                             [--reasoning-effort E] | --openai-url URL [--no-thinking]] [--split split.csv --only test]
                             [--workers N] [--region R] [--max-tokens N] [--limit N] [--required-facts facts.jsonl]
 """
 import argparse
-import copy
 import csv
 import json
 import re
@@ -45,7 +48,6 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -55,60 +57,52 @@ from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
 from botocore.config import Config
 
+import tasks
+
 ROOT = Path(__file__).resolve().parent.parent
-SYSTEM = (ROOT / "prompts" / "summarizer.md").read_text()
-ROW_SCHEMA = json.loads((ROOT / "schemas" / "output.schema.json").read_text())
 RATES = json.loads((ROOT / "tools" / "model_rates.json").read_text())
-LIST_COLUMNS = ["about", "entities", "refers_to", "evidence"]
-OUT_COLUMNS = ["unit_id", "what", "summary", "about", "entities", "refers_to", "evidence"]
-CALL_COLUMNS = ["batch", "prefix", "file_type", "rows", "model_requested", "model_served", "mode", "attempts", "length_retry",
-                "stop_reason", "input_tokens", "output_tokens", "cache_write_tokens", "cache_read_tokens",
+CALL_COLUMNS = ["batch", "prefix", "file_type", "rows", "unit_ids", "model_requested", "model_served", "mode", "attempts",
+                "length_retry", "stop_reason", "input_tokens", "output_tokens", "cache_write_tokens", "cache_read_tokens",
                 "rows_out", "start_s", "latency_s", "cost_usd", "dropped_rows", "error"]
-UNSUPPORTED = {"$schema", "$id", "title", "description", "minLength", "maxLength", "minItems", "maxItems"}
 TEXT_INSTRUCTION = ('\n\nReply with only a JSON object of the form {"rows": [...]}, one object per input row with '
                     "the output columns above, and nothing else.")
+strip = tasks.strip
+
+# The active task. Importers (make_pairs.py, sample_rft.py, select_rft.py) call set_task() and read
+# these through the module, e.g. run_model.SYSTEM, so they see the task that was set.
+TASK = SYSTEM = ROW_SCHEMA = API_SCHEMA = None
+LIST_COLUMNS = OUT_COLUMNS = ()
 
 
-def strip(schema):
-    if isinstance(schema, dict):
-        return {k: strip(v) for k, v in schema.items() if k not in UNSUPPORTED}
-    if isinstance(schema, list):
-        return [strip(v) for v in schema]
-    return schema
+def set_task(name="file-summary", prompt=None, allow_no_examples=False, root=tasks.ROOT):
+    """Makes `name` the active task. Stops if its human-written files are missing, unless allowed."""
+    global TASK, SYSTEM, ROW_SCHEMA, API_SCHEMA, LIST_COLUMNS, OUT_COLUMNS
+    task = tasks.get(name, root)
+    missing = task.missing()
+    if allow_no_examples and task.examples:
+        missing = [m for m in missing if not m.endswith(task.examples)]
+    if missing:
+        raise SystemExit(f"task {name}: missing {', '.join(missing)} (written by a person; see tasks.py)")
+    TASK, SYSTEM, ROW_SCHEMA, API_SCHEMA = task, task.system(prompt), task.row_schema(), task.api_schema()
+    LIST_COLUMNS, OUT_COLUMNS = list(task.list_columns), list(task.out_columns)
+    return task
 
 
-API_SCHEMA = {"type": "object", "properties": {"rows": {"type": "array", "items": strip(copy.deepcopy(ROW_SCHEMA))}},
-              "required": ["rows"], "additionalProperties": False}
+set_task("file-summary")
 
 
-def batches(rows, per_file=False):
-    """Batches of one prefix and one file type; per_file=True sends each row alone (whole documents)."""
-    if per_file:
-        return [((r["prefix"], r["file_type"]), [r]) for r in rows]
-    groups = OrderedDict()
-    for r in rows:
-        groups.setdefault((r["prefix"], r["file_type"]), []).append(r)
-    return list(groups.items())
+def batches(rows, per_file=False, size=None):
+    """The active task's batches: [(key, rows)]."""
+    return TASK.batches(rows, per_file, size)
 
 
 REQUIRED_FACTS = {}  # unit_id -> [fact, ...], from --required-facts; empty for every ordinary run
 
 
 def user_message(rows, required=None):
-    """The user turn for one batch, exactly as run_claude.py sends it. With `required` (a teacher
-    run), the facts each row must convey follow the table; make_pairs.py never passes them."""
-    table = [{**r, "members": int(r["members"]), "size_bytes": int(r["size_bytes"]),
-              "example_keys": json.loads(r["example_keys"]), "mentions": json.loads(r["mentions"])} for r in rows]
-    msg = "Input table, one JSON object per row:\n" + json.dumps(table, ensure_ascii=False)
-    if required:
-        facts = {r["unit_id"]: required[r["unit_id"]] for r in rows if required.get(r["unit_id"])}
-        if facts:
-            msg += ("\n\nRequired content: a reader of each output row must learn these facts about its unit. State the "
-                    "gist in the summary and carry the specifics in about, entities and refers_to; a reader of the whole row "
-                    "must learn each fact, but the summary alone need not spell them out. The summary limit of 300 characters "
-                    "is enforced by code: write it, count its characters, and shorten it until it fits. Quotes stay at most "
-                    "200 characters and verbatim.\n" + json.dumps(facts, ensure_ascii=False))
-    return msg
+    """The user turn for one batch, as run_claude.py sends it. With `required` (a teacher run), the
+    facts each row must convey follow the table; make_pairs.py never passes them."""
+    return TASK.user_message(rows, required)
 
 
 def parse_rows(text):
@@ -297,22 +291,14 @@ def sustained(calls, workers):
 
 
 def too_long(out):
-    """Teacher runs only: rows over the summary or quote limits, as feedback for one more attempt."""
-    problems = []
-    for o in out:
-        if isinstance(o, dict):
-            if len(o.get("summary") or "") > 300:
-                problems.append(f'{o.get("unit_id")}: summary is {len(o["summary"])} characters, the limit is 300')
-            for q in o.get("evidence") or []:
-                if isinstance(q, str) and len(q) > 200:
-                    problems.append(f'{o.get("unit_id")}: a quote is {len(q)} characters, the limit is 200')
-    return problems
+    """Teacher runs only: rows over the active task's limits, as feedback for one more attempt."""
+    return TASK.too_long(out)
 
 
 def call(backend, args, index, key, rows):
     prefix, file_type = key
     record = {"batch": index, "prefix": prefix, "file_type": file_type, "rows": len(rows),
-              "model_requested": args.model, "error": ""}
+              "unit_ids": json.dumps([r["unit_id"] for r in rows]), "model_requested": args.model, "error": ""}
     wanted = {r["unit_id"] for r in rows}
     start = time.perf_counter()
     record["start_s"] = round(start - T0, 3)
@@ -322,6 +308,7 @@ def call(backend, args, index, key, rows):
         record["attempts"] = attempt
         try:
             out, rec = backend.call(rows, extra)
+            out = [TASK.normalize(o) for o in out] if isinstance(out, list) else out
             for k in spent:  # every attempt's tokens count
                 spent[k] += rec.get(k) or 0
             record.update(rec, **{k: (round(v, 6) if k == "cost_usd" else v) for k, v in spent.items()})
@@ -373,7 +360,12 @@ def main():
     ap.add_argument("--cost-basis", choices=["sustained", "wall"], default="sustained",
                     help="SageMaker only: price rows at sustained throughput, or by this run's wall clock")
     ap.add_argument("--required-facts", help="teacher run: facts.jsonl whose key facts each output row must convey")
+    ap.add_argument("--task", default="file-summary", choices=sorted(tasks.TASKS))
+    ap.add_argument("--prompt", help="system prompt file in prompts/ instead of the task's own (recorded in run.json)")
+    ap.add_argument("--batch-size", type=int, help="abstract-facts: rows per call (default 10)")
+    ap.add_argument("--allow-no-examples", action="store_true", help="run a task whose examples aren't written yet (tests only)")
     args = ap.parse_args()
+    set_task(args.task, args.prompt, args.allow_no_examples)
     if args.required_facts:
         for f in map(json.loads, open(args.required_facts)):
             REQUIRED_FACTS[f["unit_id"]] = [k["fact"] for k in f["key_facts"]]
@@ -383,7 +375,7 @@ def main():
     if args.only:
         keep = {r["prefix"] for r in csv.DictReader(open(args.split, newline="")) if r["split"] == args.only}
         rows = [r for r in rows if r["prefix"] in keep]
-    work = batches(rows, args.per_file)[: args.limit]
+    work = batches(rows, args.per_file, args.batch_size)[: args.limit]
     backend = (OpenAICompatible(args) if args.openai_url else SageMaker(args) if args.sagemaker
                else BedrockChat(args) if args.chat else Bedrock(args))
     global T0
@@ -430,6 +422,7 @@ def main():
     total = lambda f: sum(c.get(f) or 0 for c in calls if c.get(f) != "")
     summary = {
         "started": started.isoformat(timespec="seconds"), "model": args.model,
+        **TASK.fingerprint(args.prompt), "batch_size": args.batch_size, "examples_allowed_missing": args.allow_no_examples,
         "backend": ("openai-compatible " + args.openai_url if args.openai_url else "sagemaker" if args.sagemaker
                     else "bedrock-chat" if args.chat else "bedrock"), "region": args.region,
         "workers": args.workers, "service_tier": args.service_tier if args.chat else None,
