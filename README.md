@@ -41,3 +41,11 @@ and fill it in, or run `./make-env.sh /path/to/source.env`. See
 
 The evaluation harness, the datasets (PubMed Central open-access articles, CC BY or
 CC0) and the model weights. The scripts expect the harness and data at `INGEST_DIR`.
+
+## License
+
+Copyright 2026 Quilt Data, Inc. Licensed under the [Apache License, Version 2.0](LICENSE).
+
+This license covers the code and documentation in this repo. Models you train with it
+are derivatives of NVIDIA Nemotron 3.5 Lightning and remain subject to NVIDIA's model
+license; the teacher and grader models are subject to their providers' terms.
