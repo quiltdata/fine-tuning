@@ -6,23 +6,45 @@
                   in the model's own words, at most 250 characters, with an optional quote (at most
                   200). The model sees only unit_id and abstract; batches of ten in input order.
 
-The abstract task's student-facing prompt (prompts/abstract_facts.md) and examples
-(prompts/abstract_examples.md) are written by a person, not drafted by a model: every run uses
-them, including the training data, which takes no Claude or OpenAI output. Until they exist, runs
-of that task stop, unless a caller explicitly allows running without examples (tests).
+Where prompts live. The file-summary prompts are in harness/prompts/. The abstract task's
+student-facing prompt and examples are data, not code: they are published in the public data
+package (task/abstract_facts.md, task/abstract_examples.md) and read from a local copy of it, whose
+path is FINE_TUNING_DATA (environment or the repo's .env). They are written by a person, not drafted
+by a model, because the training data takes no Claude or OpenAI output.
 
-Every run records task_fingerprint(): the task name and SHA-256 of its prompt, examples and schema.
+Drafts. A run can use another prompt or examples file by path (--prompt, --examples), for
+iterating outside the published package. Its fingerprint then says published: false, and the
+training path (make_pairs.py, make_sft.py) refuses it.
+
+Every run records fingerprint(): the task, the prompt and examples file names, SHA-256 of prompt,
+examples and schema, and whether prompt and examples are the published ones. Names only, never
+local paths: runs are published.
 """
 import copy
 import hashlib
 import json
+import os
 from collections import OrderedDict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+DATA_ENV = "FINE_TUNING_DATA"
 UNSUPPORTED = {"$schema", "$id", "title", "description", "minLength", "maxLength", "minItems", "maxItems", "pattern"}
 FACT_CHARS = 250
 QUOTE_CHARS = 200
+
+
+def data_dir():
+    """The local copy of the public data package: FINE_TUNING_DATA from the environment, else the
+    repo's .env (real environment variables win, as in training/config.py)."""
+    if DATA_ENV not in os.environ:
+        env = ROOT.parent / ".env"
+        for line in env.read_text().splitlines() if env.is_file() else []:
+            k, _, v = line.strip().partition("=")
+            if k.strip() == DATA_ENV and v.strip():
+                os.environ.setdefault(DATA_ENV, v.strip().strip('"').strip("'"))
+    v = os.environ.get(DATA_ENV)
+    return Path(v).expanduser() if v else None
 
 
 def strip(schema):
@@ -40,46 +62,81 @@ def _sha(path):
 
 class Task:
     name = ""
-    prompt = None             # file in prompts/
-    examples = None           # optional file in prompts/, appended to the prompt
-    output_schema = None      # file in schemas/, one output row
+    prompt = None             # the published prompt's file name
+    examples = None           # optional: the published examples' file name, appended to the prompt
+    prompt_home = "repo"      # "repo": harness/prompts/; "data": <FINE_TUNING_DATA>/task/
+    output_schema = None      # file in harness/schemas/, one output row
     list_columns = ()         # output CSV cells that hold JSON
     out_columns = ()
     requires_examples = False
 
-    def __init__(self, root=ROOT):
+    def __init__(self, root=ROOT, data=None):
         self.root = Path(root)
+        self.data = Path(data) if data else data_dir()
 
-    def path(self, kind, name):
-        return self.root / kind / name if name else None
+    def home(self):
+        """Where the published prompt and examples live (None if FINE_TUNING_DATA isn't set)."""
+        if self.prompt_home == "data":
+            return self.data / "task" if self.data else None
+        return self.root / "prompts"
 
-    def missing(self):
-        """Files this task needs that don't exist yet."""
-        need = [self.path("prompts", self.prompt), self.path("schemas", self.output_schema)]
-        if self.requires_examples:
-            need.append(self.path("prompts", self.examples))
-        return [str(p.relative_to(self.root)) for p in need if p and not p.exists()]
+    def published(self, name):
+        return self.home() / name if name and self.home() else None
 
-    def system(self, prompt=None):
-        """The system prompt: the task prompt (or `prompt`, a file in prompts/), then the examples if any."""
-        text = self.path("prompts", prompt or self.prompt).read_text()
-        ex = self.path("prompts", self.examples)
-        if ex and ex.exists() and ex.read_text().strip():
-            text = text.rstrip() + "\n\n" + ex.read_text().strip() + "\n"
+    def resolve(self, override):
+        """A --prompt or --examples value: a path to a file, or a name in harness/prompts/
+        (file-summary's alternates, such as summarizer_main_finding.md)."""
+        p = Path(override).expanduser()
+        if p.exists():
+            return p
+        alt = self.root / "prompts" / override
+        return alt if alt.exists() else p
+
+    def files(self, prompt=None, examples=None):
+        """(prompt path, examples path or None): the overrides if given, else the published ones."""
+        return (self.resolve(prompt) if prompt else self.published(self.prompt),
+                self.resolve(examples) if examples else self.published(self.examples))
+
+    def schema_path(self):
+        return self.root / "schemas" / self.output_schema
+
+    def missing(self, prompt=None, examples=None, allow_no_examples=False):
+        """What this run needs that doesn't exist yet."""
+        pp, ep = self.files(prompt, examples)
+        need = [("prompt", pp), ("schema", self.schema_path())]
+        if self.requires_examples and not allow_no_examples:
+            need.append(("examples", ep))
+        return [f"{kind} ({DATA_ENV} is not set)" if p is None else f"{kind} {p.name}" for kind, p in need
+                if p is None or not p.exists()]
+
+    def system(self, prompt=None, examples=None):
+        """The system prompt: the prompt, then the examples if there are any."""
+        pp, ep = self.files(prompt, examples)
+        text = pp.read_text()
+        if ep and ep.exists() and ep.read_text().strip():
+            text = text.rstrip() + "\n\n" + ep.read_text().strip() + "\n"
         return text
 
     def row_schema(self):
-        return json.loads(self.path("schemas", self.output_schema).read_text())
+        return json.loads(self.schema_path().read_text())
 
     def api_schema(self):
         return {"type": "object", "properties": {"rows": {"type": "array", "items": strip(copy.deepcopy(self.row_schema()))}},
                 "required": ["rows"], "additionalProperties": False}
 
-    def fingerprint(self, prompt=None):
-        return {"task": self.name, "prompt": prompt or self.prompt,
-                "prompt_sha256": _sha(self.path("prompts", prompt or self.prompt)),
-                "examples_sha256": _sha(self.path("prompts", self.examples)),
-                "schema_sha256": _sha(self.path("schemas", self.output_schema))}
+    def fingerprint(self, prompt=None, examples=None):
+        """What a run used: file names (never local paths) and hashes, and whether the prompt and
+        examples are the published ones (published: true is the only kind the training path takes)."""
+        pp, ep = self.files(prompt, examples)
+        ep = ep if ep and ep.exists() else None
+        out = {"task": self.name, "prompt": pp.name if pp else None, "prompt_sha256": _sha(pp),
+               "examples": ep.name if ep else None, "examples_sha256": _sha(ep),
+               "schema_sha256": _sha(self.schema_path())}
+        pub_p, pub_e = self.published(self.prompt), self.published(self.examples)
+        out["published"] = bool(pub_p and pub_p.exists() and out["prompt_sha256"] == _sha(pub_p)
+                                and out["examples_sha256"] == _sha(pub_e)
+                                and (out["examples_sha256"] or not self.requires_examples))
+        return out
 
     def batches(self, rows, per_file=False, size=None):
         raise NotImplementedError
@@ -147,6 +204,7 @@ class AbstractFacts(Task):
     name = "abstract-facts"
     prompt = "abstract_facts.md"
     examples = "abstract_examples.md"
+    prompt_home = "data"
     output_schema = "abstract_output.schema.json"
     list_columns = ("about", "findings")
     out_columns = ("unit_id", "about", "findings")
@@ -210,7 +268,7 @@ class AbstractFacts(Task):
 TASKS = {t.name: t for t in (FileSummary, AbstractFacts)}
 
 
-def get(name="file-summary", root=ROOT):
+def get(name="file-summary", root=ROOT, data=None):
     if name not in TASKS:
         raise SystemExit(f"unknown task {name!r}; one of {sorted(TASKS)}")
-    return TASKS[name](root)
+    return TASKS[name](root, data)

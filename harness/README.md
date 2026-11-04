@@ -60,11 +60,22 @@ The input rules live in `tools/abstracts.py`: which abstract is the main one, ho
 (UTF-8 bytes of the flattened text, section titles kept), truncation at 4,096 bytes on a whole
 character, and the three-signal study-protocol rule (PubMed type, title, protocol headings).
 
-**Written by a person, not a model:** the task's student-facing prompt
-(`prompts/abstract_facts.md`) and its examples (`prompts/abstract_examples.md`). Every run uses
-them, including the training data, which takes no Claude or OpenAI output, so runs stop until
-they exist. The key-writer and grader prompts (`prompts/abstract_key.md`,
-`prompts/abstract_grader_*.md`) never reach the student.
+**The prompt and examples are data, not code.** The task's student-facing prompt and examples
+are published in the public data package
+([`quilt+s3://quilt-ai#package=models/nemotron-lightning`](https://nightly.quilttest.com/b/quilt-ai/packages/models/nemotron-lightning)),
+as `task/abstract_facts.md` and `task/abstract_examples.md`, written by a person, not a model. The
+tools read them from a local copy of that package, `FINE_TUNING_DATA` in `.env`. Runs stop until
+they exist.
+
+**Drafts stay out of training.** `--prompt PATH` and `--examples PATH` run any other files, for
+iterating on a prompt elsewhere. Such a run records `"published": false` (with file names and
+hashes, never local paths), and the training path refuses it: `make_pairs.py` won't build pairs
+from it, and `make_sft.py` refuses any pair whose prompt and examples aren't the published ones.
+Iterate on a dev set of your own, never the test set. `make_sft.py` also refuses Claude and closed
+OpenAI teachers.
+
+The key-writer and grader prompts (`prompts/abstract_key.md`, `prompts/abstract_grader_*.md`) stay
+here: they are part of the evaluation and never reach the student.
 
 **Baselines on Claude** should be the model itself: `run_claude.py --no-fallback`, so a refusal
 isn't answered by a different model.

@@ -1,12 +1,12 @@
 """The abstract task through the real command-line tools, offline: run, check, pairs, score.
 
-The model is a local OpenAI-compatible server stub; the prompt is a throwaway test prompt in a
-temporary harness root (the real one is written by a person); the grader is mocked.
+The model is a local OpenAI-compatible server stub; the prompt and examples are throwaway test
+files in a temporary data package (the real ones are published, written by a person); the grader
+is mocked. A draft run of the same task is then refused by the training path.
 """
 import csv
 import functools
 import json
-import shutil
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -15,6 +15,7 @@ import pytest
 
 import check_outputs
 import make_pairs
+import make_sft
 import run_model as rm
 import score_abstracts
 import tasks
@@ -56,12 +57,11 @@ def server():
 
 
 def test_abstract_task_end_to_end(tmp_path, monkeypatch, capsys, server):
-    root = tmp_path / "harness"
-    (root / "prompts").mkdir(parents=True)
-    (root / "schemas").mkdir()
-    shutil.copy(tasks.ROOT / "schemas" / "abstract_output.schema.json", root / "schemas")
-    (root / "prompts" / "abstract_facts.md").write_text("TEST PROMPT\n")
-    monkeypatch.setattr(rm, "set_task", functools.partial(rm.set_task, root=root))
+    data = tmp_path / "data"
+    (data / "task").mkdir(parents=True)
+    (data / "task" / "abstract_facts.md").write_text("TEST PROMPT\n")
+    (data / "task" / "abstract_examples.md").write_text("TEST EXAMPLES\n")
+    monkeypatch.setattr(rm, "set_task", functools.partial(rm.set_task, data=data))
     sd, rd = tmp_path / "set", tmp_path / "run"
     (sd / "reference").mkdir(parents=True)
     with open(sd / "inputs.csv", "w", newline="") as fh:
@@ -71,13 +71,14 @@ def test_abstract_task_end_to_end(tmp_path, monkeypatch, capsys, server):
 
     # run: 13 abstracts in batches of 10 and 3, thinking off, through the stub server
     monkeypatch.setattr(sys, "argv", ["run_model.py", str(sd / "inputs.csv"), str(rd), "--model", "stub", "--openai-url", server,
-                                      "--no-thinking", "--task", "abstract-facts", "--allow-no-examples", "--workers", "2"])
+                                      "--no-thinking", "--task", "abstract-facts", "--workers", "2"])
     rm.main()
     run = json.loads((rd / "run.json").read_text())
-    assert run["task"] == "abstract-facts" and run["prompt_sha256"] and run["examples_sha256"] is None
-    assert run["examples_allowed_missing"] is True and run["output_rows"] == 13 and run["calls_ok"] == 2
+    assert run["task"] == "abstract-facts" and run["published"] is True and run["examples_sha256"]
+    assert run["prompt"] == "abstract_facts.md" and str(tmp_path) not in json.dumps(run["prompt"])
+    assert run["output_rows"] == 13 and run["calls_ok"] == 2
     assert sorted(len(json.loads(r["messages"][1]["content"].split("\n", 1)[1])) for r in Stub.requests) == [3, 10]
-    assert all(r["messages"][0]["content"] == "TEST PROMPT\n" for r in Stub.requests)
+    assert all(r["messages"][0]["content"] == "TEST PROMPT\n\nTEST EXAMPLES\n" for r in Stub.requests)
     assert all(r["chat_template_kwargs"] == {"enable_thinking": False} for r in Stub.requests)
     out = {r["unit_id"]: r for r in csv.DictReader(open(rd / "outputs.csv", newline=""))}
     assert json.loads(out["PMC1.1"]["about"]) == {"fact": "A mouse study of drug Z."}  # "" quote dropped
@@ -96,8 +97,24 @@ def test_abstract_task_end_to_end(tmp_path, monkeypatch, capsys, server):
     make_pairs.main()
     pairs = [json.loads(l) for l in open(pairs_path)]
     assert sum(p["rows"] for p in pairs) == 13 and all(p["rows"] == p["rows_passing_check"] for p in pairs)
-    assert all(p["system"] == "TEST PROMPT\n" and "Required content" not in p["user"] for p in pairs)
-    assert all(p["teacher_model"] == "stub" for p in pairs)
+    assert all(p["system"] == "TEST PROMPT\n\nTEST EXAMPLES\n" and "Required content" not in p["user"] for p in pairs)
+    assert all(p["teacher_model"] == "stub" and p["published"] for p in pairs)
+    make_sft.main(str(pairs_path), str(tmp_path / "train.jsonl"), data=data)
+    assert sum(1 for _ in open(tmp_path / "train.jsonl")) == len(pairs)
+
+    # a draft run of the same task can be run and checked, but not turned into training data
+    draft = tmp_path / "drafts" / "draft1.md"
+    draft.parent.mkdir()
+    draft.write_text("DRAFT PROMPT\n")
+    rd2 = tmp_path / "draft-run"
+    monkeypatch.setattr(sys, "argv", ["run_model.py", str(sd / "inputs.csv"), str(rd2), "--model", "stub", "--openai-url", server,
+                                      "--task", "abstract-facts", "--prompt", str(draft), "--workers", "2"])
+    rm.main()
+    assert json.loads((rd2 / "run.json").read_text())["published"] is False
+    (rd2 / "check.txt").write_text(check)
+    monkeypatch.setattr(sys, "argv", ["make_pairs.py", str(sd / "inputs.csv"), str(rd2), str(tmp_path / "draft-pairs.jsonl")])
+    with pytest.raises(SystemExit, match="draft"):
+        make_pairs.main()
 
     # score, with a mocked grader and a key
     keys = [{"unit_id": a["unit_id"], "key_facts": [{"id": "about", "role": "about", "fact": "An RCT of a diet.", "quote": "q"}]

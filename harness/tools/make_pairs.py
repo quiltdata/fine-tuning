@@ -26,11 +26,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_model as rm  # noqa: E402  (same task definitions as run_claude.py, without the Anthropic SDK)
 
 
-def set_task_from_run(run, root=None):
-    """Makes the run's task active and checks its files still match what the run used."""
-    task = rm.set_task(run.get("task", "file-summary"), run.get("prompt") if run.get("task") else None,
-                       allow_no_examples=bool(run.get("examples_allowed_missing")), **({"root": root} if root else {}))
-    now = task.fingerprint(run.get("prompt"))
+def set_task_from_run(run, **where):
+    """Makes the run's task active and checks the run may become training data.
+
+    A task with published prompts (abstract-facts) only takes runs made with the published prompt
+    and examples, unchanged since: a draft run, or one whose files have changed, is refused. The
+    file-summary task keeps its earlier rule: its files must match the run's hashes where recorded.
+    `where` (root=, data=) is for tests."""
+    name = run.get("task", "file-summary")
+    if name != "file-summary" and not run.get("published"):
+        raise SystemExit("the run used a draft prompt or examples (published: false); "
+                         "only runs on the published prompt and examples can become training data")
+    prompt = run.get("prompt") if name == "file-summary" and run.get("task") else None
+    task = rm.set_task(name, prompt, **where)
+    now = rm.fingerprint()
+    if name != "file-summary" and not now["published"]:
+        raise SystemExit("the published prompt or examples are missing here")
     changed = [k for k in ("prompt_sha256", "examples_sha256", "schema_sha256") if k in run and run[k] != now[k]]
     if changed:
         raise SystemExit(f"{', '.join(changed)} differ from the run's; pairs would not match what the teacher saw")
@@ -77,6 +88,7 @@ def main():
     else:
         groups = [(i, b) for i, (_, b) in enumerate(rm.batches(rows, size=info.get("batch_size")))]
     written = 0
+    fp = rm.fingerprint()
     with open(a.out, "w") as fh:
         for key, batch in groups:
             ids = [r["unit_id"] for r in batch]
@@ -84,6 +96,8 @@ def main():
                 continue
             teachers = sorted({served.get(u) or by_batch.get(key, "") for u in ids})
             fh.write(json.dumps({
+                "task": fp["task"], "prompt_sha256": fp["prompt_sha256"], "examples_sha256": fp["examples_sha256"],
+                "published": fp["published"],
                 "batch": key, "teacher_model": ",".join(t for t in teachers if t),
                 "rows": len(ids), "rows_passing_check": sum(u not in failed for u in ids),
                 "system": rm.SYSTEM, "user": rm.user_message(batch),

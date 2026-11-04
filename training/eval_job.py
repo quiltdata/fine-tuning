@@ -33,22 +33,33 @@ sys.path.insert(0, str(HARNESS / "tools"))
 import tasks  # noqa: E402
 
 TOOLS = ["tools/run_model.py", "tools/tasks.py", "tools/model_rates.json"]
-EVAL_CMD = """cd $C && python3 tools/run_model.py eligible_inputs.csv $O/run --model lightning --openai-url http://localhost:8000/v1 \\
-  --no-thinking --workers 64 --max-tokens 4096 --task __TASK____BATCH____PER_FILE__"""
-SAMPLE_CMD = """cd $C && python3 sample_rft.py train_inputs.csv $O/samples.jsonl --n __N__ --temperature __T__ --workers 64 \\
-  --task __TASK____BATCH__"""
+EVAL_CMD = """cd $C && FINE_TUNING_DATA=$C/data python3 tools/run_model.py eligible_inputs.csv $O/run --model lightning \\
+  --openai-url http://localhost:8000/v1 --no-thinking --workers 64 --max-tokens 4096 --task __TASK____BATCH____PER_FILE____DRAFTS__"""
+SAMPLE_CMD = """cd $C && FINE_TUNING_DATA=$C/data python3 sample_rft.py train_inputs.csv $O/samples.jsonl --n __N__ \\
+  --temperature __T__ --workers 64 --task __TASK____BATCH__"""
 
 
-def code_files(task_name):
-    """Harness files the job needs: the tools, and the task's prompt, examples (if written) and schema."""
+def code_files(task_name, prompt=None, examples=None):
+    """[(local file, key in the code channel)] the job needs, and the run_model.py arguments for drafts.
+
+    The tools and the task's schema; the published prompt and examples (from the harness for
+    file-summary, from the local data package for abstract-facts, placed under data/task/), or
+    drafts given by path, placed under drafts/ and passed with --prompt / --examples."""
     task = tasks.get(task_name, HARNESS)
-    missing = task.missing()
+    missing = task.missing(prompt, examples)
     if missing:
         raise SystemExit(f"task {task_name}: missing {', '.join(missing)}")
-    files = [f"prompts/{task.prompt}", f"schemas/{task.output_schema}"]
-    if task.examples and (HARNESS / "prompts" / task.examples).exists():
-        files.append(f"prompts/{task.examples}")
-    return TOOLS + files
+    files = [(HARNESS / rel, rel) for rel in TOOLS] + [(task.schema_path(), f"schemas/{task.output_schema}")]
+    home = "data/task" if task.prompt_home == "data" else "prompts"
+    args = ""
+    for flag, override, name in (("--prompt", prompt, task.prompt), ("--examples", examples, task.examples)):
+        if override:
+            path = task.resolve(override)
+            files.append((path, f"drafts/{path.name}"))
+            args += f" {flag} drafts/{path.name}"
+        elif name and task.published(name) and task.published(name).exists():
+            files.append((task.published(name), f"{home}/{name}"))
+    return files, args
 
 
 SCRIPT = r"""
@@ -94,18 +105,23 @@ def main():
     ap.add_argument("--per-file", action="store_true", help="one row per call (whole documents)")
     ap.add_argument("--task", default="file-summary", choices=sorted(tasks.TASKS))
     ap.add_argument("--batch-size", type=int, help="abstract-facts: rows per call (default 10)")
+    ap.add_argument("--prompt", help="evaluation only: a draft prompt file (path) instead of the published one")
+    ap.add_argument("--examples", help="evaluation only: a draft examples file (path) instead of the published one")
     a = ap.parse_args()
     if a.sample and not a.train_inputs:
         ap.error("--sample needs --train-inputs")
     if not a.sample and not a.inputs:
         ap.error("--inputs is required")
+    if a.sample and (a.prompt or a.examples):
+        ap.error("sampling feeds training, which takes only the published prompt and examples")
 
     name = f"{PREFIX}-ingest-eval-{a.suffix}"
     bucket = f"sagemaker-{a.region}-{ACCOUNT}"
     code_prefix = f"{PREFIX}/ingest/{name}/code/"
     s3 = boto3.client("s3", region_name=a.region)
-    for rel in code_files(a.task):
-        s3.upload_file(str(HARNESS / rel), bucket, code_prefix + rel)
+    files, drafts = code_files(a.task, a.prompt, a.examples)
+    for local, key in files:
+        s3.upload_file(str(local), bucket, code_prefix + key)
     if a.sample:
         s3.upload_file(a.train_inputs, bucket, code_prefix + "train_inputs.csv")
         s3.upload_file(str(Path(__file__).resolve().parent / "sample_rft.py"), bucket, code_prefix + "sample_rft.py")
@@ -113,7 +129,8 @@ def main():
         s3.upload_file(a.inputs, bucket, code_prefix + "eligible_inputs.csv")
     batch = f" --batch-size {a.batch_size}" if a.batch_size else ""
     command = (SAMPLE_CMD.replace("__N__", str(a.n)).replace("__T__", str(a.temperature)) if a.sample else
-               EVAL_CMD.replace("__PER_FILE__", " --per-file" if a.per_file else "")).replace("__TASK__", a.task).replace("__BATCH__", batch)
+               EVAL_CMD.replace("__PER_FILE__", " --per-file" if a.per_file else "").replace("__DRAFTS__", drafts)
+               ).replace("__TASK__", a.task).replace("__BATCH__", batch)
     script = SCRIPT.replace("__COMMAND__", command).replace("__TP__", str(a.tp)).replace("__MAXLEN__", str(a.max_model_len))
     s3.put_object(Bucket=bucket, Key=code_prefix + "run_eval.sh", Body=script.encode())  # arguments are capped at 256 chars
     image = f"763104351884.dkr.ecr.{a.region}.amazonaws.com/vllm:server-sagemaker-cuda-v2.2"

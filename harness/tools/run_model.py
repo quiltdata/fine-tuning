@@ -34,7 +34,7 @@ sees the facts.
 
 Writes outputs.csv, calls.csv and run.json to out_dir, like run_claude.py.
 
-Usage: python3 run_model.py inputs.csv out_dir --model ID [--task file-summary|abstract-facts] [--prompt FILE]
+Usage: python3 run_model.py inputs.csv out_dir --model ID [--task file-summary|abstract-facts] [--prompt FILE] [--examples FILE]
                             [--batch-size N] [--sagemaker [--no-thinking] | --chat [--service-tier T]
                             [--reasoning-effort E] | --openai-url URL [--no-thinking]] [--split split.csv --only test]
                             [--workers N] [--region R] [--max-tokens N] [--limit N] [--required-facts facts.jsonl]
@@ -74,18 +74,26 @@ TASK = SYSTEM = ROW_SCHEMA = API_SCHEMA = None
 LIST_COLUMNS = OUT_COLUMNS = ()
 
 
-def set_task(name="file-summary", prompt=None, allow_no_examples=False, root=tasks.ROOT):
-    """Makes `name` the active task. Stops if its human-written files are missing, unless allowed."""
+OVERRIDES = {"prompt": None, "examples": None}
+
+
+def set_task(name="file-summary", prompt=None, allow_no_examples=False, root=tasks.ROOT, examples=None, data=None):
+    """Makes `name` the active task, with the published prompt and examples unless `prompt` or
+    `examples` (drafts, by path) are given. Stops if a needed file is missing, unless allowed."""
     global TASK, SYSTEM, ROW_SCHEMA, API_SCHEMA, LIST_COLUMNS, OUT_COLUMNS
-    task = tasks.get(name, root)
-    missing = task.missing()
-    if allow_no_examples and task.examples:
-        missing = [m for m in missing if not m.endswith(task.examples)]
+    task = tasks.get(name, root, data)
+    missing = task.missing(prompt, examples, allow_no_examples)
     if missing:
-        raise SystemExit(f"task {name}: missing {', '.join(missing)} (written by a person; see tasks.py)")
-    TASK, SYSTEM, ROW_SCHEMA, API_SCHEMA = task, task.system(prompt), task.row_schema(), task.api_schema()
+        raise SystemExit(f"task {name}: missing {', '.join(missing)} (see tasks.py)")
+    TASK, SYSTEM, ROW_SCHEMA, API_SCHEMA = task, task.system(prompt, examples), task.row_schema(), task.api_schema()
     LIST_COLUMNS, OUT_COLUMNS = list(task.list_columns), list(task.out_columns)
+    OVERRIDES.update(prompt=prompt, examples=examples)
     return task
+
+
+def fingerprint():
+    """The active task's fingerprint, for the prompt and examples this run actually uses."""
+    return TASK.fingerprint(OVERRIDES["prompt"], OVERRIDES["examples"])
 
 
 set_task("file-summary")
@@ -361,11 +369,12 @@ def main():
                     help="SageMaker only: price rows at sustained throughput, or by this run's wall clock")
     ap.add_argument("--required-facts", help="teacher run: facts.jsonl whose key facts each output row must convey")
     ap.add_argument("--task", default="file-summary", choices=sorted(tasks.TASKS))
-    ap.add_argument("--prompt", help="system prompt file in prompts/ instead of the task's own (recorded in run.json)")
+    ap.add_argument("--prompt", help="a draft prompt file (path) instead of the published one; the run is marked unpublished")
+    ap.add_argument("--examples", help="a draft examples file (path) instead of the published one")
     ap.add_argument("--batch-size", type=int, help="abstract-facts: rows per call (default 10)")
-    ap.add_argument("--allow-no-examples", action="store_true", help="run a task whose examples aren't written yet (tests only)")
+    ap.add_argument("--allow-no-examples", action="store_true", help="run without examples (drafts and tests; the run is marked unpublished)")
     args = ap.parse_args()
-    set_task(args.task, args.prompt, args.allow_no_examples)
+    set_task(args.task, args.prompt, args.allow_no_examples, examples=args.examples)
     if args.required_facts:
         for f in map(json.loads, open(args.required_facts)):
             REQUIRED_FACTS[f["unit_id"]] = [k["fact"] for k in f["key_facts"]]
@@ -422,7 +431,7 @@ def main():
     total = lambda f: sum(c.get(f) or 0 for c in calls if c.get(f) != "")
     summary = {
         "started": started.isoformat(timespec="seconds"), "model": args.model,
-        **TASK.fingerprint(args.prompt), "batch_size": args.batch_size, "examples_allowed_missing": args.allow_no_examples,
+        **fingerprint(), "batch_size": args.batch_size, "examples_allowed_missing": args.allow_no_examples,
         "backend": ("openai-compatible " + args.openai_url if args.openai_url else "sagemaker" if args.sagemaker
                     else "bedrock-chat" if args.chat else "bedrock"), "region": args.region,
         "workers": args.workers, "service_tier": args.service_tier if args.chat else None,

@@ -14,7 +14,7 @@ Opus 4.8 through the SDK middleware, and calls.csv marks any call a fallback ser
 should be the model itself: pass --no-fallback.
 Check the result with: python3 tools/check_outputs.py inputs.csv out_dir/outputs.csv
 
-Usage: python3 run_claude.py inputs.csv out_dir [--model ID] [--effort LEVEL] [--task NAME] [--prompt FILE]
+Usage: python3 run_claude.py inputs.csv out_dir [--model ID] [--effort LEVEL] [--task NAME] [--prompt FILE] [--examples FILE]
                              [--batch-size N] [--no-fallback] [--workers N] [--limit N] [--region R]
                              [--price-basis regional|global]
 """
@@ -104,10 +104,11 @@ def main():
     ap.add_argument("--model", default="anthropic.claude-opus-5-5")
     ap.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"])
     ap.add_argument("--task", default="file-summary", choices=sorted(tasks.TASKS))
-    ap.add_argument("--prompt", help="system prompt file in prompts/ instead of the task's own "
+    ap.add_argument("--examples", help="a draft examples file (path) instead of the published one")
+    ap.add_argument("--prompt", help="a draft prompt file (path) instead of the published one "
                                      "(file-summary's fair baseline: summarizer_main_finding.md)")
     ap.add_argument("--batch-size", type=int, help="abstract-facts: rows per call (default 10)")
-    ap.add_argument("--allow-no-examples", action="store_true", help="run a task whose examples aren't written yet (tests only)")
+    ap.add_argument("--allow-no-examples", action="store_true", help="run without examples (drafts and tests; the run is marked unpublished)")
     ap.add_argument("--no-fallback", action="store_true", help="no refusal fallback: every row is answered by --model or not at all")
     ap.add_argument("--per-file", action="store_true", help="one row per call instead of one batch per prefix and file type")
     ap.add_argument("--workers", type=int, default=4)
@@ -115,7 +116,7 @@ def main():
     ap.add_argument("--region", default="us-east-1")
     ap.add_argument("--price-basis", default="regional", choices=["regional", "global"])
     args = ap.parse_args()
-    rm.set_task(args.task, args.prompt, args.allow_no_examples)
+    rm.set_task(args.task, args.prompt, args.allow_no_examples, examples=args.examples)
 
     csv.field_size_limit(sys.maxsize)
     rows = list(csv.DictReader(open(args.inputs, newline="")))
@@ -147,7 +148,7 @@ def main():
     total = lambda f: sum(c.get(f) or 0 for c in calls if c.get(f) != "")
     summary = {
         "started": started.isoformat(timespec="seconds"), "model": args.model, "effort": args.effort,
-        **rm.TASK.fingerprint(args.prompt), "batch_size": args.batch_size, "examples_allowed_missing": args.allow_no_examples,
+        **rm.fingerprint(), "batch_size": args.batch_size, "examples_allowed_missing": args.allow_no_examples,
         "region": args.region, "price_basis": args.price_basis, "fallback_model": None if args.no_fallback else FALLBACK_MODEL,
         "workers": args.workers,
         "input_rows": sum(len(r) for _, r in work), "output_rows": sum(len(o) for _, o in results),
