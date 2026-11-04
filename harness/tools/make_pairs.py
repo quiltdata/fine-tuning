@@ -26,10 +26,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_model as rm  # noqa: E402  (same task definitions as run_claude.py, without the Anthropic SDK)
 
 
-def set_task_from_run(run, root=rm.tasks.ROOT):
+def set_task_from_run(run, root=None):
     """Makes the run's task active and checks its files still match what the run used."""
     task = rm.set_task(run.get("task", "file-summary"), run.get("prompt") if run.get("task") else None,
-                       allow_no_examples=bool(run.get("examples_allowed_missing")), root=root)
+                       allow_no_examples=bool(run.get("examples_allowed_missing")), **({"root": root} if root else {}))
     now = task.fingerprint(run.get("prompt"))
     changed = [k for k in ("prompt_sha256", "examples_sha256", "schema_sha256") if k in run and run[k] != now[k]]
     if changed:

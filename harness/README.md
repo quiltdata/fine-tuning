@@ -32,6 +32,52 @@ A **set** is a folder with `inputs.csv`, `split.csv` (test sets), `reference/fac
 and `runs/<name>/`. A row is one file excerpt; a run's batches group rows by article
 folder and file type.
 
+## Tasks
+
+`tools/tasks.py` defines each task once: its prompt and examples, output schema, what the model
+sees of an input row, batching and length limits. `run_model.py`, `run_claude.py`, `make_pairs.py`
+and the training tools take `--task`, and every run records the task with SHA-256 of its prompt,
+examples and schema.
+
+| Task | Input | Output | Batches |
+| --- | --- | --- | --- |
+| `file-summary` (default) | a file excerpt and mentions | `what`, `summary`, `about`, `entities`, `refers_to`, `evidence` | one article folder and file type |
+| `abstract-facts` | a paper's main abstract, at most 4,096 UTF-8 bytes | one `about` fact and zero to two `findings`, each at most 250 characters with an optional quote | 10 abstracts (`--batch-size`) |
+
+### The abstract task
+
+| Step | Tool | Writes |
+| --- | --- | --- |
+| Sample articles (no supplement requirement) | `tools/sample_pmc.py --articles-only` | `articles.csv` (with PMIDs) |
+| Build inputs: main abstract, size, truncation, publication types, protocol flag | `tools/make_abstracts.py` | `inputs.csv`, `skipped.csv` |
+| Write the typed key (about, findings) | `tools/make_facts.py --task abstract-facts --split-label test` | `reference/facts.jsonl` |
+| Run a model | `tools/run_model.py` or `tools/run_claude.py --task abstract-facts` | `runs/<name>/…` |
+| Check validity | `tools/check_outputs.py --task abstract-facts` | pass/fail per row; quotes as a note |
+| Score | `tools/score_abstracts.py` (twice: GPT-6.1 sol, then `--grader … --tag sonnet`) | `scores.csv`, `grades.jsonl`, `score.json` |
+| Teacher run to pairs, any batch size | `tools/make_pairs.py --mixed-batches SEED`, then `tools/make_sft.py` | `pairs.jsonl`, `train.jsonl` |
+
+The input rules live in `tools/abstracts.py`: which abstract is the main one, how it is counted
+(UTF-8 bytes of the flattened text, section titles kept), truncation at 4,096 bytes on a whole
+character, and the three-signal study-protocol rule (PubMed type, title, protocol headings).
+
+**Written by a person, not a model:** the task's student-facing prompt
+(`prompts/abstract_facts.md`) and its examples (`prompts/abstract_examples.md`). Every run uses
+them, including the training data, which takes no Claude or OpenAI output, so runs stop until
+they exist. The key-writer and grader prompts (`prompts/abstract_key.md`,
+`prompts/abstract_grader_*.md`) never reach the student.
+
+**Baselines on Claude** should be the model itself: `run_claude.py --no-fallback`, so a refusal
+isn't answered by a different model.
+
+### Tests
+
+```bash
+python3 -m pytest harness/tests
+```
+
+Offline: the model, grader and NCBI are stubbed. `test_end_to_end.py` runs the abstract task
+through the command-line tools against a local OpenAI-compatible stub.
+
 ## Prompts and schemas
 
 - `prompts/summarizer.md`: the task. `summarizer_main_finding.md` adds one sentence asking for
