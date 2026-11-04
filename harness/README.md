@@ -51,7 +51,7 @@ examples and schema.
 | Sample articles (no supplement requirement) | `tools/sample_pmc.py --articles-only` | `articles.csv` (with PMIDs) |
 | Build inputs: main abstract, size, truncation, publication types, protocol flag | `tools/make_abstracts.py` | `inputs.csv`, `skipped.csv` |
 | Write the typed key (about, findings) | `tools/make_facts.py --task abstract-facts --split-label test` | `reference/facts.jsonl` |
-| Run a model | `tools/run_model.py` or `tools/run_claude.py --task abstract-facts` | `runs/<name>/…` |
+| Run a model | `tools/run_model.py --task abstract-facts` (Bedrock Converse, SageMaker or OpenAI-compatible) | `runs/<name>/…` |
 | Check validity | `tools/check_outputs.py --task abstract-facts` | pass/fail per row; quotes as a note |
 | Score | `tools/score_abstracts.py` (twice: GPT-6.1 sol, then `--grader … --tag sonnet`) | `scores.csv`, `grades.jsonl`, `score.json` |
 | Teacher run to pairs, any batch size | `tools/make_pairs.py --mixed-batches SEED`, then `tools/make_sft.py` | `pairs.jsonl`, `train.jsonl` |
@@ -77,8 +77,11 @@ OpenAI teachers.
 The key-writer and grader prompts (`prompts/abstract_key.md`, `prompts/abstract_grader_*.md`) stay
 here: they are part of the evaluation and never reach the student.
 
-**Baselines on Claude** should be the model itself: `run_claude.py --no-fallback`, so a refusal
-isn't answered by a different model.
+**Baselines on Claude** run through `run_model.py`'s Bedrock Converse backend
+(`--model us.anthropic.claude-haiku-5-5`, `us.anthropic.claude-opus-5-5`), both the same way: Haiku 5.5
+isn't served on the Anthropic-SDK Bedrock endpoint `run_claude.py` uses (it returns 404). Converse
+has no refusal fallback, so every row is the model's own. If `run_claude.py` is used (Opus only),
+pass `--no-fallback`.
 
 ### Tests
 

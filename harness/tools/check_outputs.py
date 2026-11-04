@@ -60,6 +60,9 @@ def quote_found(q, source):
 
 
 ABSTRACT_SCHEMA = json.loads((Path(__file__).resolve().parent.parent / "schemas" / "abstract_output.schema.json").read_text())
+# Validity doesn't depend on the optional, unscored quote's length: that check is dropped here.
+VALIDITY_SCHEMA = json.loads(json.dumps(ABSTRACT_SCHEMA))
+VALIDITY_SCHEMA["$defs"]["fact"]["properties"]["quote"].pop("maxLength")
 ABSTRACT_LIST_COLUMNS = ["about", "findings"]
 
 
@@ -72,10 +75,10 @@ def parse_abstract_row(row):
 
 
 def abstract_problems(out):
-    """Validity of one parsed abstract-task row: the schema (one about fact, at most two findings,
-    250 characters a fact, 200 a quote), by code."""
+    """Validity of one parsed abstract-task row, by code: the schema (one about fact, at most two
+    findings, 250 characters a fact). Quotes are optional and not scored, so their length isn't."""
     try:
-        jsonschema.validate(out, ABSTRACT_SCHEMA)
+        jsonschema.validate(out, VALIDITY_SCHEMA)
         return []
     except jsonschema.ValidationError as e:
         return [f"schema: {e.message}"[:160]]

@@ -382,6 +382,8 @@ def main():
     csv.field_size_limit(sys.maxsize)
     rows = list(csv.DictReader(open(args.inputs, newline="")))
     if args.only:
+        if rows and "prefix" not in rows[0]:
+            ap.error("--split/--only select article folders; this input table has none (abstract sets are separate files)")
         keep = {r["prefix"] for r in csv.DictReader(open(args.split, newline="")) if r["split"] == args.only}
         rows = [r for r in rows if r["prefix"] in keep]
     work = batches(rows, args.per_file, args.batch_size)[: args.limit]
@@ -431,7 +433,8 @@ def main():
     total = lambda f: sum(c.get(f) or 0 for c in calls if c.get(f) != "")
     summary = {
         "started": started.isoformat(timespec="seconds"), "model": args.model,
-        **fingerprint(), "batch_size": args.batch_size, "examples_allowed_missing": args.allow_no_examples,
+        **fingerprint(), "batch_size": args.batch_size, "per_file": args.per_file,
+        "examples_allowed_missing": args.allow_no_examples,
         "backend": ("openai-compatible " + args.openai_url if args.openai_url else "sagemaker" if args.sagemaker
                     else "bedrock-chat" if args.chat else "bedrock"), "region": args.region,
         "workers": args.workers, "service_tier": args.service_tier if args.chat else None,

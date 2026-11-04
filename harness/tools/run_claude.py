@@ -148,7 +148,8 @@ def main():
     total = lambda f: sum(c.get(f) or 0 for c in calls if c.get(f) != "")
     summary = {
         "started": started.isoformat(timespec="seconds"), "model": args.model, "effort": args.effort,
-        **rm.fingerprint(), "batch_size": args.batch_size, "examples_allowed_missing": args.allow_no_examples,
+        **rm.fingerprint(), "batch_size": args.batch_size, "per_file": args.per_file,
+        "examples_allowed_missing": args.allow_no_examples,
         "region": args.region, "price_basis": args.price_basis, "fallback_model": None if args.no_fallback else FALLBACK_MODEL,
         "workers": args.workers,
         "input_rows": sum(len(r) for _, r in work), "output_rows": sum(len(o) for _, o in results),

@@ -19,7 +19,8 @@ Measures, for all rows and split by the protocol flag:
   findings_recall    key findings conveyed / key findings (rows whose key has none don't count)
   faithfulness       the model's facts graded supported / facts stated; also overstated, unsupported
   redundancy         rows with redundant findings / rows with two findings
-  invented_findings  rows whose key has no findings but whose output states one
+  invented_findings  rows whose key has no findings, with none dropped by the key's quote check (so
+                     the abstract reports none), but whose output states one
   validity           rows passing the code check / rows
   quotes_found       side metric, not scored
   usd_per_100_rows   the run's spend, each call's cost shared by its rows (calls.csv unit_ids)
@@ -54,7 +55,7 @@ FAITH_SCHEMA = {"type": "object", "required": ["verdicts", "redundant"], "proper
     "verdicts": {"type": "array", "items": {"type": "object", "required": ["id", "verdict"],
                                             "properties": {"id": {"type": "string"}, "verdict": {"enum": VERDICTS}}}},
     "redundant": {"type": "boolean"}}}
-COLUMNS = ["unit_id", "protocol", "valid", "problems", "key_about", "about_conveyed", "key_findings", "findings_conveyed",
+COLUMNS = ["unit_id", "protocol", "valid", "problems", "key_about", "about_conveyed", "key_findings", "key_dropped", "findings_conveyed",
            "stated", "out_findings", "supported", "overstated", "unsupported", "two_findings", "redundant",
            "quotes_given", "quotes_found", "cost_usd", "missed", "error"]
 
@@ -78,7 +79,8 @@ def graded(system, msg, schema, name, wanted, key, args):
                              max_tokens=2000)
         spent += rec.get("cost_usd") or 0
         rec.update(attempts=attempt, cost_usd=round(spent, 6))
-        got = {str(v.get("id")).rstrip("."): v.get(key) for v in (res or {}).get("verdicts", [])}
+        got = {str(v.get("id")).rstrip("."): (v.get(key).strip().lower() if isinstance(v.get(key), str) else v.get(key))
+               for v in (res or {}).get("verdicts", [])}
         if set(wanted) <= set(got):
             return {k: got[k] for k in wanted}, (res or {}), rec
         rec["error"] = rec.get("error") or f"verdicts for {sorted(got)}, wanted {wanted}"
@@ -109,7 +111,8 @@ def grade_faithfulness(abstract, facts, args):
 def score_row(key, inp, raw, cost_share, args):
     row = {"unit_id": key["unit_id"], "protocol": int(inp.get("protocol") or 0), "cost_usd": cost_share, "error": "",
            "key_about": int(any(k["role"] == "about" for k in key["key_facts"])),
-           "key_findings": sum(k["role"] == "finding" for k in key["key_facts"])}
+           "key_findings": sum(k["role"] == "finding" for k in key["key_facts"]),
+           "key_dropped": len(key.get("dropped") or [])}
     out, problems = None, []
     if raw is None:
         problems = ["no output row"]
@@ -121,10 +124,10 @@ def score_row(key, inp, raw, cost_share, args):
             problems = [f"unparseable: {e}"[:160]]
     facts = model_facts(out) if out else []
     valid = not problems
-    previous = args.previous.get(key["unit_id"])
+    previous, reused = args.previous.get(key["unit_id"]), False
     if previous:
         recall, faith, redundant = previous["recall"], previous["faithfulness"], previous["redundant"]
-        recs = previous["calls"]
+        recs, reused = previous["calls"], True
     else:
         recall, r1 = grade_recall(key["key_facts"], facts if valid else [], args)
         faith, redundant, r2 = grade_faithfulness(inp["abstract"], facts, args)
@@ -144,7 +147,8 @@ def score_row(key, inp, raw, cost_share, args):
         two_findings=int(out_findings == 2), redundant=int(out_findings == 2 and redundant),
         quotes_given=len(given), quotes_found=len(given) - len(missing),
         missed=" ".join(k for k, v in recall.items() if not v))
-    grades = {"unit_id": key["unit_id"], "recall": recall, "faithfulness": faith, "redundant": redundant, "calls": recs}
+    grades = {"unit_id": key["unit_id"], "recall": recall, "faithfulness": faith, "redundant": redundant, "calls": recs,
+              "reused": reused}
     return row, grades
 
 
@@ -164,8 +168,8 @@ def totals(rows):
         "facts_stated": s("stated"), "faithfulness": ratio(s("supported"), s("stated")),
         "overstated": ratio(s("overstated"), s("stated")), "unsupported": ratio(s("unsupported"), s("stated")),
         "rows_with_two_findings": s("two_findings"), "redundancy": ratio(s("redundant"), s("two_findings")),
-        "invented_findings": sum(1 for r in rows if r["key_findings"] == 0 and r["out_findings"] > 0),
-        "rows_key_without_findings": sum(1 for r in rows if r["key_findings"] == 0),
+        "invented_findings": sum(1 for r in rows if r["key_findings"] == 0 and not r["key_dropped"] and r["out_findings"] > 0),
+        "rows_key_without_findings": sum(1 for r in rows if r["key_findings"] == 0 and not r["key_dropped"]),
         "quotes_found": ratio(s("quotes_found"), s("quotes_given")),
         "spend_usd": round(spend, 4), "usd_per_100_rows": round(100 * spend / len(rows), 4),
         "errors": sum(1 for r in rows if r["error"]),
@@ -211,7 +215,7 @@ def main():
     with open(rd / f"grades{sfx}.jsonl", "w") as fh:
         for _, g in results:
             fh.write(json.dumps(g, ensure_ascii=False) + "\n")
-    calls = [c for _, g in results for c in g["calls"] if not args.previous]
+    calls = [c for _, g in results if not g.get("reused") for c in g["calls"]]  # this scoring's calls only
     run = json.loads((rd / "run.json").read_text()) if (rd / "run.json").exists() else {}
     summary = {
         "scored": started.isoformat(timespec="seconds"), "run_dir": rd.name, "model": run.get("model"),
