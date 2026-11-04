@@ -1,0 +1,179 @@
+{
+ "runs": {
+  "ft": {
+   "run": "lightning-ft-v5-nvfp4",
+   "rows": 262,
+   "score_gpt": 69.2,
+   "score_sonnet": 65.7,
+   "top2": 82.4,
+   "top2_sonnet": 81.5,
+   "score_top2_gpt": 85.6,
+   "score_top2_sonnet": 84.9,
+   "key_facts": 62.0,
+   "check_pass": 219,
+   "rows_returned": 262,
+   "output_tokens_per_row": 465
+  },
+  "base-nvfp4": {
+   "run": "lightning-l40s",
+   "rows": 262,
+   "score_gpt": 48.6,
+   "score_sonnet": 46.7,
+   "top2": 62.4,
+   "top2_sonnet": 59.2,
+   "score_top2_gpt": 68.9,
+   "score_top2_sonnet": 67.2,
+   "key_facts": 36.9,
+   "check_pass": 139,
+   "rows_returned": 258,
+   "output_tokens_per_row": 404
+  },
+  "base-bf16": {
+   "run": "lightning-base-bf16",
+   "rows": 262,
+   "score_gpt": 49.9,
+   "score_sonnet": 47.3,
+   "top2": 63.2,
+   "top2_sonnet": 57.6,
+   "score_top2_gpt": 70.0,
+   "score_top2_sonnet": 66.9,
+   "key_facts": 37.9,
+   "check_pass": 138,
+   "rows_returned": 259,
+   "output_tokens_per_row": 460
+  },
+  "haiku": {
+   "run": "claude-haiku-5-5-full",
+   "rows": 262,
+   "score_gpt": 56.1,
+   "score_sonnet": 55.1,
+   "top2": 66.6,
+   "top2_sonnet": 64.1,
+   "score_top2_gpt": 77.8,
+   "score_top2_sonnet": 77.5,
+   "key_facts": 39.1,
+   "check_pass": 252,
+   "rows_returned": 259,
+   "output_tokens_per_row": 415
+  },
+  "gpt-6-luna": {
+   "run": "gpt-6-luna-full",
+   "rows": 262,
+   "score_gpt": 58.1,
+   "score_sonnet": 55.0,
+   "top2": 73.7,
+   "top2_sonnet": 69.8,
+   "score_top2_gpt": 78.4,
+   "score_top2_sonnet": 76.3,
+   "key_facts": 47.8,
+   "check_pass": 224,
+   "rows_returned": 262,
+   "output_tokens_per_row": 377
+  },
+  "opus": {
+   "run": "claude-opus-5-5",
+   "rows": 262,
+   "score_gpt": 66.8,
+   "score_sonnet": 64.9,
+   "top2": 80.9,
+   "top2_sonnet": 78.2,
+   "score_top2_gpt": 88.2,
+   "score_top2_sonnet": 86.6,
+   "key_facts": 53.2,
+   "check_pass": 257,
+   "rows_returned": 292,
+   "output_tokens_per_row": 559
+  }
+ },
+ "paired_vs_ft": {
+  "base-nvfp4": {
+   "gpt": [
+    20.0,
+    15.9,
+    24.1
+   ],
+   "sonnet": [
+    22.3,
+    18.3,
+    26.4
+   ]
+  },
+  "base-bf16": {
+   "gpt": [
+    19.3,
+    15.5,
+    23.2
+   ],
+   "sonnet": [
+    23.9,
+    19.9,
+    28.0
+   ]
+  },
+  "haiku": {
+   "gpt": [
+    15.8,
+    11.4,
+    20.4
+   ],
+   "sonnet": [
+    17.4,
+    13.6,
+    21.5
+   ]
+  },
+  "gpt-6-luna": {
+   "gpt": [
+    8.8,
+    4.8,
+    12.8
+   ],
+   "sonnet": [
+    11.6,
+    7.9,
+    15.6
+   ]
+  },
+  "opus": {
+   "gpt": [
+    1.5,
+    -1.9,
+    4.9
+   ],
+   "sonnet": [
+    3.2,
+    -0.4,
+    6.9
+   ]
+  }
+ },
+ "bar": {
+  "top-2 recall within 3 of Opus (gpt)": {
+   "need": 77.9,
+   "got": 82.4,
+   "pass": true
+  },
+  "top-2 recall within 3 of Opus (sonnet)": {
+   "need": 75.2,
+   "got": 81.5,
+   "pass": true
+  },
+  "quote check >= 85%": {
+   "need": 223,
+   "got": 219,
+   "pass": false
+  },
+  "rows returned >= 99%": {
+   "need": 259,
+   "got": 262,
+   "pass": true
+  },
+  "<= 800 output tokens per row": {
+   "need": 800,
+   "got": 465,
+   "pass": true
+  }
+ },
+ "paired_metric": "top2",
+ "verdict": "FAIL"
+}

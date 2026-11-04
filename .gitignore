@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+
+# Models / data artifacts
+*.safetensors
+*.bin
+*.gguf
+checkpoints/
+models/
+data/
+
+# OS / editor
+.DS_Store
+.ipynb_checkpoints/

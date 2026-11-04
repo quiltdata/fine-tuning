@@ -1,0 +1,37 @@
+{
+    "Image": "763104351884.dkr.ecr.us-east-2.amazonaws.com/vllm:server-sagemaker-cuda-v2.2",
+    "Mode": "SingleModel",
+    "ModelDataSource": {
+        "S3DataSource": {
+            "S3Uri": "s3://jumpstart-cache-prod-us-east-2/huggingface-reasoning/huggingface-reasoning-nemotron-3-5-lightning-30b-a3b-nvfp4/artifacts/inference-prepack/v1.0.0/",
+            "S3DataType": "S3Prefix",
+            "CompressionType": "None"
+        }
+    },
+    "Environment": {
+        "ENDPOINT_SERVER_TIMEOUT": "3600",
+        "HF_HUB_OFFLINE": "1",
+        "HF_MODEL_ID": "/opt/ml/model",
+        "MODEL_CACHE_ROOT": "/opt/ml/model",
+        "SAFETENSORS_FAST_GPU": "1",
+        "SAGEMAKER_ENV": "1",
+        "SAGEMAKER_MODEL_SERVER_TIMEOUT": "3600",
+        "SAGEMAKER_MODEL_SERVER_WORKERS": "1",
+        "SAGEMAKER_PROGRAM": "inference.py",
+        "SAGEMAKER_SUBMIT_DIRECTORY": "/opt/ml/model/code",
+        "SM_VLLM_DTYPE": "auto",
+        "SM_VLLM_ENABLE_AUTO_TOOL_CHOICE": "true",
+        "SM_VLLM_ENABLE_CHUNKED_PREFILL": "true",
+        "SM_VLLM_GPU_MEMORY_UTILIZATION": "0.85",
+        "SM_VLLM_MAX_MODEL_LEN": "65536",
+        "SM_VLLM_MAX_NUM_SEQS": "8",
+        "SM_VLLM_MODEL": "/opt/ml/model",
+        "SM_VLLM_REASONING_PARSER": "ultra_v3",
+        "SM_VLLM_REASONING_PARSER_PLUGIN": "/opt/ml/model/ultra_v3_reasoning_parser.py",
+        "SM_VLLM_SERVED_MODEL_NAME": "nemotron-3.5-lightning",
+        "SM_VLLM_TENSOR_PARALLEL_SIZE": "1",
+        "SM_VLLM_TOOL_CALL_PARSER": "qwen3_coder",
+        "SM_VLLM_TRUST_REMOTE_CODE": "true",
+        "TRANSFORMERS_OFFLINE": "1"
+    }
+}
