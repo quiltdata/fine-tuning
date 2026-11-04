@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Create, or delete, a temporary production-shaped endpoint for an NVFP4 Lightning export (METHODOLOGY.md §6).
 
-The same shape as the throughput sweep that measured the base model's cost (ingest sets/pmc-v1/
+The same shape as the throughput sweep that measured the base model's cost (sets/pmc-v1/
 lightning-throughput, endpoints.json): qurator-nemotron's container settings (lightning_container.json,
 vLLM image, one L40S, tensor-parallel 1, 64K context) with max_num_seqs raised to 64, on ml.g6e.xlarge
 (2xlarge as the fallback pool). Serving the fine-tune this way measures its real cost per row and

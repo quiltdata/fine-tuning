@@ -1,0 +1,143 @@
+{
+ "_note": "USD per 1M tokens, us-east-2 on-demand standard tier, for run_model.py and bedrock_tool.py. 'price list' rows were read from the AWS Pricing API (service AmazonBedrock) on 2026-10-24; 'benchmark' rows come from a model-efficiency benchmark's price table of 2026-10-20, which cites AWS's stated rates or model cards. SageMaker endpoints are costed by instance time instead.",
+ "bedrock": {
+  "us.anthropic.claude-opus-5-5": {
+   "input": 4.4,
+   "output": 22.0,
+   "source": "benchmark (matches tools/bedrock_prices.json regional)"
+  },
+  "us.anthropic.claude-sonnet-5-5": {
+   "input": 2.2,
+   "output": 11.0,
+   "source": "benchmark: stated rate"
+  },
+  "us.anthropic.claude-haiku-5-5": {
+   "input": 0.11,
+   "output": 0.55,
+   "source": "benchmark: stated rate"
+  },
+  "us.openai.gpt-6-astra": {
+   "input": 11.0,
+   "output": 55.0,
+   "source": "benchmark: AWS docs model card"
+  },
+  "us.openai.gpt-6.1-sol": {
+   "input": 2.2,
+   "output": 11.0,
+   "source": "benchmark: AWS docs model card"
+  },
+  "us.openai.gpt-6-luna": {
+   "input": 0.11,
+   "output": 0.55,
+   "source": "benchmark: AWS docs model card"
+  },
+  "us.openai.gpt-5.6-luna": {
+   "input": 0.22,
+   "output": 1.32,
+   "source": "benchmark"
+  },
+  "us.moonshotai.kimi-k3": {
+   "input": 3.3,
+   "output": 16.5,
+   "source": "benchmark"
+  },
+  "us.zai.glm-5.3": {
+   "input": 1.848,
+   "output": 5.808,
+   "source": "benchmark"
+  },
+  "us.meta.llama4-maverick-17b-instruct-v1:0": {
+   "input": 0.24,
+   "output": 0.97,
+   "source": "price list"
+  },
+  "us.meta.llama4-scout-17b-instruct-v1:0": {
+   "input": 0.17,
+   "output": 0.66,
+   "source": "price list"
+  },
+  "us.amazon.nova-2-lite-v1:0": {
+   "input": 0.33,
+   "output": 2.75,
+   "source": "price list"
+  },
+  "us.amazon.nova-micro-v1:0": {
+   "input": 0.035,
+   "output": 0.14,
+   "source": "benchmark: Price List offer file"
+  },
+  "deepseek.v3.2": {
+   "input": 0.62,
+   "output": 1.85,
+   "source": "price list"
+  },
+  "qwen.qwen3-235b-a22b-2507-v1:0": {
+   "input": 0.22,
+   "output": 0.88,
+   "source": "price list"
+  },
+  "mistral.mistral-large-3-675b-instruct": {
+   "input": 0.5,
+   "output": 1.5,
+   "source": "price list"
+  },
+  "openai.gpt-oss-120b-1:0": {
+   "input": 0.15,
+   "output": 0.6,
+   "source": "price list"
+  },
+  "openai.gpt-oss-20b-1:0": {
+   "input": 0.07,
+   "output": 0.3,
+   "source": "price list"
+  },
+  "nvidia.nemotron-super-3-120b": {
+   "input": 0.15,
+   "output": 0.65,
+   "source": "price list"
+  },
+  "nvidia.nemotron-nano-3-30b": {
+   "input": 0.06,
+   "output": 0.24,
+   "source": "price list"
+  }
+ },
+ "sagemaker": {
+  "qurator-nemotron": {
+   "instance": "ml.g6e.2xlarge",
+   "usd_per_hour": 2.8026,
+   "region": "us-east-2",
+   "source": "price list (AmazonSageMaker USE2-Host:ml.g6e.2xlarge)"
+  },
+  "ingest-lightning-l40s": {
+   "instance": "ml.g6e.xlarge",
+   "usd_per_hour": 2.6054,
+   "region": "us-east-2",
+   "source": "price list (AmazonSageMaker USE2-Host:ml.g6e.xlarge); temporary benchmark endpoint, max_num_seqs 64"
+  },
+  "ingest-lightning-l4": {
+   "instance": "ml.g6.2xlarge",
+   "usd_per_hour": 1.222,
+   "region": "us-east-2",
+   "source": "price list (AmazonSageMaker USE2-Host:ml.g6.2xlarge); temporary benchmark endpoint, max_num_seqs 32, max_model_len 16384"
+  },
+  "ingest-lightning-base-bf16": {
+   "instance": "ml.g6e.12xlarge",
+   "usd_per_hour": 13.1158,
+   "region": "us-east-2",
+   "source": "price list (AmazonSageMaker USE2-Host:ml.g6e.12xlarge); temporary quality-evaluation endpoint, BF16 tensor-parallel over 4 L40S. Not a deployment cost: deployment cost per row comes from the NVFP4 throughput sweep."
+  },
+  "ingest-lightning-ft-v1": {
+   "instance": "ml.g6e.12xlarge",
+   "usd_per_hour": 13.1158,
+   "region": "us-east-2",
+   "source": "price list (AmazonSageMaker USE2-Host:ml.g6e.12xlarge); temporary quality-evaluation endpoint, BF16 tensor-parallel over 4 L40S. Not a deployment cost: deployment cost per row comes from the NVFP4 throughput sweep."
+  },
+  "ingest-lightning-ft-v5-nvfp4": {
+   "instance": "ml.g6e.2xlarge",
+   "usd_per_hour": 2.8026,
+   "region": "us-east-2",
+   "source": "price list (AmazonSageMaker USE2-Host:ml.g6e.2xlarge); temporary benchmark endpoint for the v5 NVFP4 export, max_num_seqs 64. Same single L40S as ml.g6e.xlarge ($2.6054/h), which had no capacity on 2026-10-27; production qurator-nemotron runs on 2xlarge"
+  }
+ }
+}

@@ -1,4 +1,4 @@
-"""LoRA SFT of Nemotron 3.5 Lightning (30B-A3B, BF16) as the ingest summarizer, thinking off.
+"""LoRA SFT of Nemotron 3.5 Lightning (30B-A3B, BF16) as a key-fact summarizer, thinking off.
 
 SageMaker training-job entry point. Channels and paths:
   SM_CHANNEL_MODEL   BF16 base checkpoint (JumpStart cache prefix, mounted as files)

@@ -1,0 +1,8 @@
+boto3
+jsonschema
+# make_inputs.py, by file type
+pypdf
+openpyxl
+pyarrow
+# run_claude.py only
+anthropic

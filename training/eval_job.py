@@ -4,18 +4,19 @@
 On-demand 4-GPU endpoints had no capacity on 2026-10-24, while Spot training capacity did. So
 the job runs the same vLLM image as qurator-nemotron with its own entrypoint: start vLLM on the
 model channel (BF16, tensor-parallel 4, 32K context, 64 sequences, the model's reasoning parser),
-wait for it, then run ingest's run_model.py against it with thinking off. outputs.csv, calls.csv,
+wait for it, then run harness/tools/run_model.py against it with thinking off. outputs.csv, calls.csv,
 run.json and the vLLM log end up in the job's model.tar.gz. Base and fine-tuned run identically.
 
-With --sample it instead draws --n answers per training batch (pmc-v2) at --temperature, for
-rejection-sampling fine-tuning (4 at 0.8 for v2, 6 at 0.9 for v4-v6).
+--inputs is the input table to evaluate (the test set's inputs.csv). With --sample it instead draws
+--n answers per training batch of --train-inputs (the training set's inputs.csv) at --temperature,
+for rejection-sampling fine-tuning (4 at 0.8 for v2, 6 at 0.9 for v4-v6).
 
-With --inputs it evaluates another input table (e.g. whole PDFs), and --tp, --max-model-len and
---per-file serve an NVFP4 export the way production does (one GPU, 64K context) and send one document per call.
+--tp, --max-model-len and --per-file serve an NVFP4 export the way production does (one GPU,
+64K context) and send one document per call (whole PDFs).
 
-Usage: python3 eval_job.py <name-suffix> <s3-model-prefix> [--spot] [--region us-east-2] [--max-hours H]
-                           [--sample [--n 4] [--temperature 0.8]]
-                           [--inputs inputs.csv] [--tp 4] [--max-model-len 32768] [--per-file]
+Usage: python3 eval_job.py <name-suffix> <s3-model-prefix> --inputs inputs.csv [--spot] [--region us-east-2]
+                           [--max-hours H] [--tp 4] [--max-model-len 32768] [--per-file]
+       python3 eval_job.py <name-suffix> <s3-model-prefix> --sample --train-inputs inputs.csv [--n 4] [--temperature 0.8]
 """
 import argparse
 from pathlib import Path
@@ -23,10 +24,8 @@ from pathlib import Path
 import boto3
 
 from config import ACCOUNT, PREFIX, ROLE, BASE_TAGS
-INGEST = Path(__file__).resolve().parent.parent / "ingest"
-CODE = ["tools/run_model.py", "tools/model_rates.json", "prompts/summarizer.md", "schemas/output.schema.json",
-        "eligible_inputs.csv"]
-SAMPLE_CODE = {"set2/inputs.csv": "train_inputs.csv"}  # --sample: ingest path -> name in the code channel
+HARNESS = Path(__file__).resolve().parent.parent / "harness"
+CODE = ["tools/run_model.py", "tools/model_rates.json", "prompts/summarizer.md", "schemas/output.schema.json"]
 EVAL_CMD = """cd $C && python3 tools/run_model.py eligible_inputs.csv $O/run --model lightning --openai-url http://localhost:8000/v1 \\
   --no-thinking --workers 64 --max-tokens 4096__PER_FILE__"""
 SAMPLE_CMD = """cd $C && python3 sample_rft.py train_inputs.csv $O/samples.jsonl --n __N__ --temperature __T__ --workers 64"""
@@ -66,22 +65,27 @@ def main():
     ap.add_argument("--sample", action="store_true", help="sample --n answers per training batch (sample_rft.py) instead of evaluating")
     ap.add_argument("--n", type=int, default=4)
     ap.add_argument("--temperature", type=float, default=0.8)
-    ap.add_argument("--inputs", help="input table to evaluate instead of the 262-row eligible_inputs.csv")
+    ap.add_argument("--inputs", help="input table to evaluate (required unless --sample)")
+    ap.add_argument("--train-inputs", help="--sample: the training set's input table")
     ap.add_argument("--tp", type=int, default=4, help="tensor-parallel size (1 for an NVFP4 export, as production)")
     ap.add_argument("--max-model-len", type=int, default=32768)
     ap.add_argument("--per-file", action="store_true", help="one row per call (whole documents)")
     a = ap.parse_args()
+    if a.sample and not a.train_inputs:
+        ap.error("--sample needs --train-inputs")
+    if not a.sample and not a.inputs:
+        ap.error("--inputs is required")
 
     name = f"{PREFIX}-ingest-eval-{a.suffix}"
     bucket = f"sagemaker-{a.region}-{ACCOUNT}"
     code_prefix = f"{PREFIX}/ingest/{name}/code/"
     s3 = boto3.client("s3", region_name=a.region)
     for rel in CODE:
-        src = a.inputs if (rel == "eligible_inputs.csv" and a.inputs) else str(INGEST / rel)
-        s3.upload_file(src, bucket, code_prefix + rel)
+        s3.upload_file(str(HARNESS / rel), bucket, code_prefix + rel)
     if a.sample:
-        for rel, as_name in SAMPLE_CODE.items():
-            s3.upload_file(str(INGEST / rel), bucket, code_prefix + as_name)
+        s3.upload_file(a.train_inputs, bucket, code_prefix + "train_inputs.csv")
+    else:
+        s3.upload_file(a.inputs, bucket, code_prefix + "eligible_inputs.csv")
         s3.upload_file(str(Path(__file__).resolve().parent / "sample_rft.py"), bucket, code_prefix + "sample_rft.py")
     command = SAMPLE_CMD.replace("__N__", str(a.n)).replace("__T__", str(a.temperature)) if a.sample else \
         EVAL_CMD.replace("__PER_FILE__", " --per-file" if a.per_file else "")

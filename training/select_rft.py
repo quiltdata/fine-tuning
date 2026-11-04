@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Choose rejection-sampling training targets (the reward rounds; --facts adds the fact grader, METHODOLOGY.md §5).
 
-Per training batch, a candidate qualifies only if it passes ingest 03's check on every row: schema
+Per training batch, a candidate qualifies only if it passes check_outputs.py's check on every row: schema
 and length limits, exactly the batch's rows, every evidence quote verbatim in that row's excerpt or
 mentions. Then one of two selection rules:
 
@@ -10,7 +10,7 @@ mentions. Then one of two selection rules:
             back to the teacher's answer if it passed the check (it is in train.jsonl).
   --facts   (v4-v6) candidates are the qualifying samples plus the teacher's answer if it passed. Each
             candidate's rows are graded against the batch's two required facts (facts.jsonl from
-            make_facts.py, grader prompt ingest prompts/grader.md) by an open model on Bedrock's
+            make_facts.py, grader prompt harness/prompts/grader.md) by an open model on Bedrock's
             Chat Completions API, and the candidate with the highest top-2 recall wins. At equal
             recall an own sample beats the teacher (the model's own check-passing answers are what
             the round is for), and among own samples the one closest to the teacher's wording wins.
@@ -32,7 +32,7 @@ from pathlib import Path
 
 import jsonschema
 
-ROOT = Path(__file__).resolve().parent.parent / "ingest"
+ROOT = Path(__file__).resolve().parent.parent / "harness"
 sys.path.insert(0, str(ROOT / "tools"))
 from run_model import SYSTEM, batches, parse_rows, user_message  # noqa: E402
 from check_outputs import quote_found  # noqa: E402  (the clarified comparison; rounds up to v6 used norm() only)

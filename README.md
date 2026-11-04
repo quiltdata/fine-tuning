@@ -14,6 +14,7 @@ results.
 | --- | --- |
 | [`METHODOLOGY.md`](METHODOLOGY.md) | How the model was trained and judged, the results, and the corrections that changed them. **Start here.** |
 | [`training/`](training/) | The post-training code: LoRA SFT, reward-stage selection, evaluation, and NVFP4 export, run as SageMaker jobs. See [`training/README.md`](training/README.md). |
+| [`harness/`](harness/) | Building the datasets, running any model, and checking and scoring its outputs. See [`harness/README.md`](harness/README.md). |
 
 ## Status
 
@@ -39,8 +40,8 @@ and fill it in, or run `./make-env.sh /path/to/source.env`. See
 
 ## Not in this repo
 
-The evaluation harness, the datasets (PubMed Central open-access articles, CC BY or
-CC0) and the model weights. The scripts expect the harness and data at `INGEST_DIR`.
+The datasets (PubMed Central open-access articles, CC BY or CC0; `harness/` rebuilds
+them from public S3) and the model weights.
 
 ## License
 

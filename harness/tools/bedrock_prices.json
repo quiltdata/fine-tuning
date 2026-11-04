@@ -1,0 +1,55 @@
+{
+ "fetched": "2026-10-24",
+ "models": {
+  "anthropic.claude-opus-4-8": {
+   "global": {
+    "cache_read": 0.5,
+    "cache_write_1h": 10.0,
+    "cache_write_5m": 6.25,
+    "input": 5.0,
+    "output": 25.0
+   },
+   "regional": {
+    "cache_read": 0.55,
+    "cache_write_1h": 11.0,
+    "cache_write_5m": 6.875,
+    "input": 5.5,
+    "output": 27.5
+   }
+  },
+  "anthropic.claude-opus-5-5": {
+   "global": {
+    "cache_read": 0.2,
+    "cache_write_1h": 8.0,
+    "cache_write_5m": 5.0,
+    "input": 4.0,
+    "output": 20.0
+   },
+   "regional": {
+    "cache_read": 0.22,
+    "cache_write_1h": 8.8,
+    "cache_write_5m": 5.5,
+    "input": 4.4,
+    "output": 22.0
+   }
+  },
+  "anthropic.claude-sonnet-5-5": {
+   "global": {
+    "cache_read": 0.1,
+    "cache_write_1h": 4.0,
+    "cache_write_5m": 2.5,
+    "input": 2.0,
+    "output": 10.0
+   },
+   "regional": {
+    "cache_read": 0.11,
+    "cache_write_1h": 4.4,
+    "cache_write_5m": 2.75,
+    "input": 2.2,
+    "output": 11.0
+   }
+  }
+ },
+ "source": "AWS Pricing API, service AmazonBedrockFoundationModels, us-east-1, on-demand standard tier",
+ "unit": "USD per 1M tokens"
+}

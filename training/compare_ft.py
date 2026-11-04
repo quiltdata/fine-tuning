@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Judge a fine-tuned Lightning run against the pass/fail bar fixed before training (25a; METHODOLOGY.md §4).
 
-Reads scored runs on all 262 rows of ingest sets/pmc-v1 (score.json and score.sonnet.json, or
+Reads scored runs on all 262 rows of the test set, sets/pmc-v1 (score.json and score.sonnet.json, or
 score.all.json and score.all-sonnet.json for the NVFP4 sweep run) and prints a JSON verdict:
 each run's numbers, paired bootstrap gaps (resampled by article) between the fine-tune and the
 references, and each criterion of the bar with pass or fail.
@@ -9,7 +9,7 @@ references, and each criterion of the bar with pass or fail.
 --bar 25c judges against 25c's bar instead: top-2 key-fact recall within 3 of Opus under both
 graders, plus the quote, rows-returned and token limits. Gaps are then in top-2 recall points.
 
-Usage: python3 compare_ft.py <ingest set dir> <ft run name> [--bar 25a|25c]
+Usage: python3 compare_ft.py <set dir> <ft run name> [--bar 25a|25c]
 """
 import csv
 import json

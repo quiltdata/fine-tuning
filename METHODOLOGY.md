@@ -211,7 +211,7 @@ above:
 
 ## What's not in this repo
 
-- **The evaluation harness** (`run_model.py`, `score_run.py`, `check_outputs.py`,
-  `make_facts.py`, `make_sft.py`, `make_report.py`), the test/training sets, and the
-  answer keys. The training scripts expect them at `INGEST_DIR`.
+- **The datasets and answer keys.** [`harness/`](harness/) rebuilds them from PubMed
+  Central's public S3 bucket, but re-sampling and re-keying won't reproduce our exact rows
+  or facts.
 - **Model weights.** The LoRA adapters and the NVFP4 export (~20 GB) are not in git.
