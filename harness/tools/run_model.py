@@ -63,7 +63,8 @@ ROOT = Path(__file__).resolve().parent.parent
 RATES = json.loads((ROOT / "tools" / "model_rates.json").read_text())
 CALL_COLUMNS = ["batch", "prefix", "file_type", "rows", "unit_ids", "model_requested", "model_served", "mode", "attempts",
                 "length_retry", "stop_reason", "input_tokens", "output_tokens", "cache_write_tokens", "cache_read_tokens",
-                "rows_out", "start_s", "latency_s", "cost_usd", "dropped_rows", "error"]
+                "rows_out", "start_s", "latency_s", "cost_usd", "dropped_rows", "filtered", "error"]
+FILTERED = {"content_filtered", "content_filter"}  # the provider's filter cut the reply off (Bedrock, OpenAI-style)
 strip = tasks.strip
 
 # The active task. Importers (make_pairs.py, sample_rft.py, select_rft.py) call set_task() and read
@@ -314,6 +315,9 @@ def call(backend, args, index, key, rows):
             record.update(rec, **{k: (round(v, 6) if k == "cost_usd" else v) for k, v in spent.items()})
             if rec.get("cost_usd") == "":
                 record["cost_usd"] = ""
+            if str(rec.get("stop_reason")) in FILTERED:  # a cut-off fragment is not the model's answer
+                record["filtered"] = (record.get("filtered") or 0) + 1
+                raise RuntimeError(f"reply cut off by the provider's content filter (stop_reason {rec.get('stop_reason')})")
             if REQUIRED_FACTS and not fed_back and too_long(out):
                 fed_back = True
                 extra = ("\n\nYour previous answer broke these limits. Answer again, shorter, keeping the required facts:\n" +
@@ -437,6 +441,7 @@ def main():
         "modes": sorted({c.get("mode") for c in calls if c.get("mode")}),
         "input_rows": sum(len(r) for _, r in work), "output_rows": sum(len(o) for _, o in results),
         "calls": len(calls), "calls_ok": sum(1 for c in calls if not c["error"]),
+        "calls_filtered": sum(1 for c in calls if c.get("filtered") and c["error"]),
         "dropped_rows": sum(c.get("dropped_rows") or 0 for c in calls),
         "input_tokens": total("input_tokens"), "output_tokens": total("output_tokens"),
         "cache_write_tokens": total("cache_write_tokens"), "cache_read_tokens": total("cache_read_tokens"),

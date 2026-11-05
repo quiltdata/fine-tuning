@@ -79,3 +79,30 @@ def test_make_pairs_keeps_per_file_batches_and_skips_failed_rows_in_mixed(tmp_pa
     make_pairs.main()
     mixed = [json.loads(l) for l in open(tmp_path / "m.jsonl")]
     assert sum(p["rows"] for p in mixed) == 3 and all(p["rows"] == p["rows_passing_check"] for p in mixed)
+
+
+def test_content_filtered_reply_is_a_failed_call_not_an_answer(tmp_path):
+    from test_tasks import abstract_data
+    rm.set_task("abstract-facts", data=abstract_data(tmp_path), allow_no_examples=True)
+    calls = []
+
+    class Filtered:
+        def call(self, batch, extra=""):
+            calls.append(1)
+            fragment = [{"about": '{"fact": "This is a lab st', "findings": []}]
+            return fragment, {"model_served": "m", "stop_reason": "content_filtered", "input_tokens": 900, "output_tokens": 40}
+
+    record, out = rm.call(Filtered(), SimpleNamespace(model="m"), 0, ("abstract-0", "abstract"), [{"unit_id": "A.1", "abstract": "x"}])
+    assert out == [] and record["rows_out"] == 0 and "content filter" in record["error"]
+    assert len(calls) == 2 and record["filtered"] == 2 and record["input_tokens"] == 1800  # retried once; tokens still billed
+    rm.set_task("file-summary")
+
+
+def test_string_encoded_facts_are_decoded(tmp_path):
+    from test_tasks import abstract_data
+    import tasks
+    task = tasks.get("abstract-facts", data=abstract_data(tmp_path))
+    row = {"unit_id": "A.1", "about": '{"fact": "A trial.", "quote": ""}', "findings": '[{"fact": "X fell.", "quote": "x"}]'}
+    assert task.normalize(row) == {"unit_id": "A.1", "about": {"fact": "A trial."}, "findings": [{"fact": "X fell.", "quote": "x"}]}
+    broken = {"unit_id": "A.1", "about": '{"fact": "cut off', "findings": []}
+    assert task.normalize(broken)["about"] == '{"fact": "cut off'  # left as is, so the check fails it

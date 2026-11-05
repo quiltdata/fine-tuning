@@ -277,10 +277,20 @@ class AbstractFacts(Task):
         return {k: v for k, v in row.items() if k != "unit_id"}
 
     def normalize(self, row):
-        """Drops empty or missing quotes, so "" from strict structured output reads as no quote."""
+        """Drops empty or missing quotes, so "" from strict structured output reads as no quote, and
+        decodes a fact or findings list a model returned as a JSON string (seen from Opus 5.5 when
+        Bedrock won't force the tool). The same for every model."""
         if not isinstance(row, dict):
             return row
+        def decoded(v):
+            if isinstance(v, str):
+                try:
+                    return json.loads(v)
+                except json.JSONDecodeError:
+                    return v
+            return v
         def fact(f):
+            f = decoded(f)
             if not isinstance(f, dict):
                 return f
             f = {k: v for k, v in f.items() if not (k == "quote" and not (isinstance(v, str) and v.strip()))}
@@ -288,6 +298,7 @@ class AbstractFacts(Task):
         out = dict(row)
         if "about" in out:
             out["about"] = fact(out["about"])
+        out["findings"] = decoded(out.get("findings", []))
         if isinstance(out.get("findings"), list):
             out["findings"] = [fact(f) for f in out["findings"]]
         return out
