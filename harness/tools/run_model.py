@@ -63,7 +63,7 @@ ROOT = Path(__file__).resolve().parent.parent
 RATES = json.loads((ROOT / "tools" / "model_rates.json").read_text())
 CALL_COLUMNS = ["batch", "prefix", "file_type", "rows", "unit_ids", "model_requested", "model_served", "mode", "attempts",
                 "length_retry", "stop_reason", "input_tokens", "output_tokens", "cache_write_tokens", "cache_read_tokens",
-                "rows_out", "start_s", "latency_s", "cost_usd", "dropped_rows", "filtered", "error"]
+                "rows_out", "start_s", "latency_s", "cost_usd", "dropped_rows", "filtered", "split_from", "error"]
 FILTERED = {"content_filtered", "content_filter"}  # the provider's filter cut the reply off (Bedrock, OpenAI-style)
 strip = tasks.strip
 
@@ -169,6 +169,8 @@ class Bedrock:
         r = RATES["bedrock"].get(self.args.model)
         prompt = rec["input_tokens"] + rec["cache_write_tokens"] + rec["cache_read_tokens"]
         rec["cost_usd"] = round((prompt * r["input"] + rec["output_tokens"] * r["output"]) / 1e6, 6) if r else ""
+        if rec["stop_reason"] in FILTERED:  # don't parse a cut-off fragment; call() records the filter
+            return [], rec
         blocks = resp["output"]["message"]["content"]
         tool_input = next((b["toolUse"]["input"] for b in blocks if "toolUse" in b), None)
         if tool_input is not None:
@@ -216,6 +218,8 @@ class BedrockChat:
         r = RATES["bedrock"].get(self.args.model)
         m = TIER_MULTIPLIER.get(reply.get("service_tier", self.args.service_tier), 1.0)
         rec["cost_usd"] = round(m * (usage.get("prompt_tokens", 0) * r["input"] + rec["output_tokens"] * r["output"]) / 1e6, 6) if r else ""
+        if rec["stop_reason"] in FILTERED:
+            return [], rec
         return parse_rows((choice.get("message") or {}).get("content") or ""), rec
 
 
@@ -241,6 +245,8 @@ class OpenAICompatible:
         rec = {"model_served": reply.get("model", self.args.model), "mode": "json_schema" + ("-no-thinking" if self.args.no_thinking else ""),
                "stop_reason": choice.get("finish_reason"), "input_tokens": usage.get("prompt_tokens", 0),
                "output_tokens": usage.get("completion_tokens", 0), "cache_write_tokens": 0, "cache_read_tokens": 0, "cost_usd": ""}
+        if rec["stop_reason"] in FILTERED:
+            return [], rec
         return parse_rows((choice.get("message") or {}).get("content") or ""), rec
 
 
@@ -275,6 +281,8 @@ class SageMaker:
         rec = {"model_served": model, "mode": "json_schema" + ("-no-thinking" if self.args.no_thinking else ""),
                "stop_reason": finish, "input_tokens": usage.get("prompt_tokens", 0),
                "output_tokens": usage.get("completion_tokens", 0), "cache_write_tokens": 0, "cache_read_tokens": 0}
+        if rec["stop_reason"] in FILTERED:
+            return [], rec
         return parse_rows("".join(content)), rec
 
 
@@ -343,6 +351,23 @@ def call(backend, args, index, key, rows):
     return record, []
 
 
+def split_filtered(backend, args, results, work, pool):
+    """Retries, one row per call, every batch of several rows the content filter blocked, so only the
+    row that trips the filter is lost. The same for every model. Returns the new (record, rows) pairs;
+    their records carry split_from, the blocked batch's number."""
+    redo = [(i, r) for (rec, outs), (i, (_, rows)) in zip(results, enumerate(work))
+            if not outs and rec.get("filtered") and len(rows) > 1 for r in rows]
+    if not redo:
+        return []
+    start = len(work)
+    done = list(pool.map(lambda j: call(backend, args, start + j, (redo[j][1].get("prefix", f"split-{redo[j][0]}"),
+                                                                   redo[j][1].get("file_type", "")), [redo[j][1]]),
+                         range(len(redo))))
+    for (rec, _), (i, _) in zip(done, redo):
+        rec["split_from"] = i
+    return done
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("inputs")
@@ -395,6 +420,7 @@ def main():
         first, work_rest = [], [(i, k, r) for i, (k, r) in enumerate(work)]
     with ThreadPoolExecutor(args.workers) as pool:
         results = first + list(pool.map(lambda w: call(backend, args, *w), work_rest))
+        results += split_filtered(backend, args, results, work, pool)
     wall = time.perf_counter() - wall
 
     instance = None
@@ -442,6 +468,9 @@ def main():
         "input_rows": sum(len(r) for _, r in work), "output_rows": sum(len(o) for _, o in results),
         "calls": len(calls), "calls_ok": sum(1 for c in calls if not c["error"]),
         "calls_filtered": sum(1 for c in calls if c.get("filtered") and c["error"]),
+        "rows_filtered": sum(c["rows"] for c in calls if c.get("filtered") and c["error"]
+                             and (c.get("split_from") is not None or c["rows"] == 1)),
+        "batches_split": len({c["split_from"] for c in calls if c.get("split_from") is not None}),
         "dropped_rows": sum(c.get("dropped_rows") or 0 for c in calls),
         "input_tokens": total("input_tokens"), "output_tokens": total("output_tokens"),
         "cache_write_tokens": total("cache_write_tokens"), "cache_read_tokens": total("cache_read_tokens"),
