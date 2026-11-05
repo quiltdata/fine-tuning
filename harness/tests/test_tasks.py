@@ -89,12 +89,53 @@ def test_abstract_answers_matched_by_number(tmp_path):
     task = tasks.get("abstract-facts", data=abstract_data(tmp_path))
     batch = [{"unit_id": "A.1", "abstract": "a"}, {"unit_id": "B.1", "abstract": "b"}]
     a1, a2 = {"about": {"fact": "one"}, "findings": []}, {"about": {"fact": "two"}, "findings": []}
-    reply = task.rows_from_reply({"answers": [{"abstract": 2, **a2}, {"abstract": 1, **a1}, {"abstract": 1, "about": {"fact": "dup"}},
-                                             {"abstract": 7, "about": {"fact": "stray"}}, {"abstract": "x"}]})
+    reply = task.rows_from_reply({"answers": [{"abstract": 2, **a2}, {"abstract": "1", **a1}]})
     assert task.attach_ids(reply, batch) == [{**a2, "unit_id": "B.1"}, {**a1, "unit_id": "A.1"}]
-    assert task.attach_ids(task.rows_from_reply(a1), batch[:1]) == [{**a1, "unit_id": "A.1"}]  # one abstract, unnumbered answer
+    assert task.attach_ids([{"abstract": 1, **a1}], batch) == [{**a1, "unit_id": "A.1"}]  # B.1 left unanswered: a missing row
+    for bad in ([{"abstract": 0, **a1}, {"abstract": 1, **a2}],      # numbered from 0: rejected, never shifted
+                [{"abstract": 1, **a1}, {"abstract": 1, **a2}],      # repeated
+                [{"abstract": 3, **a1}],                             # out of range
+                [{"abstract": True, **a1}], [{**a1}]):               # not a number; unnumbered in a batch of two
+        with pytest.raises(ValueError):
+            task.attach_ids(bad, batch)
+    assert task.attach_ids(task.rows_from_reply(a1), batch[:1]) == [{**a1, "unit_id": "A.1"}]  # one abstract, unnumbered
     assert task.assistant_json([{**a1, "unit_id": "A.1"}, {**a2, "unit_id": "B.1"}]) == {
         "answers": [{"abstract": 1, **a1}, {"abstract": 2, **a2}]}
+
+
+def test_missing_findings_stay_missing(tmp_path):
+    import check_outputs
+    task = tasks.get("abstract-facts", data=abstract_data(tmp_path))
+    row = task.normalize({"unit_id": "A.1", "about": {"fact": "A trial.", "quote": ""}})
+    assert "findings" not in row and check_outputs.abstract_problems(row)
+
+
+def test_bedrock_tool_path_for_answers(tmp_path):
+    rm.set_task("abstract-facts", data=abstract_data(tmp_path), allow_no_examples=True)
+    rows = [{"unit_id": "A.1", "abstract": "a"}, {"unit_id": "B.1", "abstract": "b"}]
+    answers = [{"abstract": 1, "about": {"fact": "one", "quote": ""}, "findings": []},
+               {"abstract": 2, "about": {"fact": "two", "quote": ""}, "findings": []}]
+
+    class Client:
+        class exceptions:
+            ValidationException = type("VE", (Exception,), {})
+        def __init__(self, tool_input, stop="tool_use"):
+            self.tool_input, self.stop = tool_input, stop
+        def converse(self, **req):
+            assert req["toolConfig"]["toolChoice"] == {"tool": {"name": "record_rows"}}
+            return {"stopReason": self.stop, "usage": {"inputTokens": 10, "outputTokens": 5},
+                    "output": {"message": {"content": [{"toolUse": {"input": self.tool_input}}]}}}
+
+    args = SimpleNamespace(model="us.anthropic.claude-haiku-5-5", region="r", max_tokens=100)
+    for tool_input in ({"answers": answers}, {"answers": json.dumps(answers)}, json.dumps({"answers": answers})):
+        be = rm.Bedrock.__new__(rm.Bedrock)
+        be.args, be.client, be.mode, be.max_tokens = args, Client(tool_input), "tool", 100
+        record, out = rm.call(be, args, 0, ("batch-0", "abstract"), rows)
+        assert record["error"] == "" and [o["unit_id"] for o in out] == ["A.1", "B.1"] and out[0]["about"] == {"fact": "one"}
+    be.client = Client({"answers": '[{"abstract": 1, "ab'}, stop="content_filtered")
+    record, out = rm.call(be, args, 0, ("batch-0", "abstract"), rows)
+    assert out == [] and record["filtered"] == 2 and "content filter" in record["error"]
+    rm.set_task("file-summary")
 
 
 def test_abstract_normalize_and_limits(tmp_path):

@@ -276,21 +276,21 @@ class AbstractFacts(Task):
         raise ValueError("no answers in reply")
 
     def attach_ids(self, out, batch):
-        """Each answer gets the id of the abstract its number names. An answer with a number outside the
-        batch, or a repeat, is dropped; with one abstract, an unnumbered answer is taken as its answer."""
-        rows, seen = [], set()
-        for o in out:
-            if not isinstance(o, dict):
-                continue
+        """Each answer gets the id of the abstract its number names. If any number is missing, not a whole
+        number, outside 1..len(batch) or repeated, the reply is rejected (call() retries it): an
+        off-by-one numbering would otherwise attach answers to the wrong abstracts. With one abstract,
+        an unnumbered answer is taken as its answer. An abstract left without an answer is a missing row."""
+        answers = [o for o in out if isinstance(o, dict)]
+        numbers = []
+        for o in answers:
             n = o.get("abstract", 1 if len(batch) == 1 else None)
-            try:
-                n = int(n)
-            except (TypeError, ValueError):
-                continue
-            if 1 <= n <= len(batch) and n not in seen:
-                seen.add(n)
-                rows.append({**{k: v for k, v in o.items() if k != "abstract"}, "unit_id": batch[n - 1]["unit_id"]})
-        return rows
+            if isinstance(n, bool) or not (isinstance(n, int) or (isinstance(n, str) and n.strip().isdigit())):
+                raise ValueError(f"answer numbered {n!r}; expected 1 to {len(batch)}")
+            numbers.append(int(n))
+        if any(not 1 <= n <= len(batch) for n in numbers) or len(set(numbers)) != len(numbers):
+            raise ValueError(f"answers numbered {numbers} for {len(batch)} abstracts")
+        return [{**{k: v for k, v in o.items() if k != "abstract"}, "unit_id": batch[n - 1]["unit_id"]}
+                for o, n in zip(answers, numbers)]
 
     def assistant_json(self, rows):
         """The answers numbered in batch order, without ids, as the model gives them."""
@@ -318,7 +318,8 @@ class AbstractFacts(Task):
         out = dict(row)
         if "about" in out:
             out["about"] = fact(out["about"])
-        out["findings"] = decoded(out.get("findings", []))
+        if "findings" in out:  # a missing key stays missing, so the check fails the answer
+            out["findings"] = decoded(out["findings"])
         if isinstance(out.get("findings"), list):
             out["findings"] = [fact(f) for f in out["findings"]]
         return out

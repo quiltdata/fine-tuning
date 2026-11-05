@@ -1,5 +1,6 @@
 """Regression tests for the review of the abstract-task harness."""
 import csv
+import functools
 import json
 import sys
 from types import SimpleNamespace
@@ -133,3 +134,36 @@ def test_filtered_batch_is_split_so_only_the_flagged_abstract_is_lost(tmp_path):
     lost = [rec for rec, outs in extra if not outs]
     assert len(lost) == 1 and lost[0]["filtered"] == 2 and json.loads(lost[0]["unit_ids"]) == ["BAD.1"]
     rm.set_task("file-summary")
+
+
+def test_make_pairs_keeps_the_answered_abstracts_of_a_batch(tmp_path, monkeypatch):
+    from test_tasks import abstract_data
+    data = abstract_data(tmp_path / "data", examples=True)
+    import tasks
+    fp = tasks.get("abstract-facts", data=data).fingerprint()
+    run = tmp_path / "run"
+    run.mkdir()
+    rows = [{"unit_id": f"P{i}.1", "abstract": f"text {i}"} for i in range(5)]
+    inputs = tmp_path / "inputs.csv"
+    with open(inputs, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=["unit_id", "abstract"])
+        w.writeheader()
+        w.writerows(rows)
+    with open(run / "outputs.csv", "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=["unit_id", "about", "findings"])
+        w.writeheader()
+        for r in rows[:2] + rows[3:]:  # P2 got no answer (say, the filter blocked it)
+            w.writerow({"unit_id": r["unit_id"], "about": json.dumps({"fact": "f"}), "findings": "[]"})
+    with open(run / "calls.csv", "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=["batch", "unit_ids", "model_served"])
+        w.writeheader()
+        w.writerow({"batch": 0, "unit_ids": json.dumps([r["unit_id"] for r in rows]), "model_served": "teacher"})
+    (run / "check.txt").write_text("")
+    (run / "run.json").write_text(json.dumps({**fp, "task": "abstract-facts"}))
+    monkeypatch.setattr(rm, "set_task", functools.partial(rm.set_task, data=data))
+    monkeypatch.setattr(sys, "argv", ["make_pairs.py", str(inputs), str(run), str(tmp_path / "p.jsonl")])
+    make_pairs.main()
+    (pair,) = [json.loads(l) for l in open(tmp_path / "p.jsonl")]
+    assert pair["rows"] == 4 and "text 2" not in pair["user"] and pair["user"].count("Abstract ") == 4
+    assert [a["abstract"] for a in json.loads(pair["assistant"])["answers"]] == [1, 2, 3, 4]
+    rm.set_task.func("file-summary")

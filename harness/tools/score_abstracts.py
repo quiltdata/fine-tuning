@@ -203,7 +203,9 @@ def main():
     excluded_file = sd / "excluded.csv"
     excluded = set() if args.no_exclude or not excluded_file.exists() else \
         {r["unit_id"] for r in csv.DictReader(open(excluded_file, newline=""))}
-    keys = [k for k in map(json.loads, open(sd / "reference" / "facts.jsonl")) if k["unit_id"] not in excluded][: args.limit]
+    all_keys = [json.loads(l) for l in open(sd / "reference" / "facts.jsonl")]
+    keys = [k for k in all_keys if k["unit_id"] not in excluded][: args.limit]
+    n_excluded = sum(1 for k in all_keys if k["unit_id"] in excluded)
     outputs = {r["unit_id"]: r for r in csv.DictReader(open(rd / "outputs.csv", newline=""))}
     share = {}
     for c in csv.DictReader(open(rd / "calls.csv", newline="")):
@@ -233,7 +235,7 @@ def main():
         "scored": started.isoformat(timespec="seconds"), "run_dir": rd.name, "model": run.get("model"),
         "task": run.get("task"), "prompt_sha256": run.get("prompt_sha256"), "examples_sha256": run.get("examples_sha256"),
         "grader": args.grader, "grader_rate": RATES[args.grader], "answer_key": "reference/facts.jsonl",
-        "excluded": len(excluded & {json.loads(l)["unit_id"] for l in open(sd / "reference" / "facts.jsonl")}),
+        "excluded": n_excluded,
         "all": totals(rows), "not_protocol": totals([r for r in rows if not r["protocol"]]),
         "protocol": totals([r for r in rows if r["protocol"]]),
         "grader_calls": len(calls), "grader_errors": sum(1 for c in calls if c.get("error")),

@@ -91,9 +91,10 @@ def main():
     fp = rm.fingerprint()
     with open(a.out, "w") as fh:
         for key, batch in groups:
-            ids = [r["unit_id"] for r in batch]
-            if not all(u in outputs for u in ids):
+            batch = [r for r in batch if r["unit_id"] in outputs]  # an abstract without an answer drops out alone
+            if not batch:
                 continue
+            ids = [r["unit_id"] for r in batch]
             teachers = sorted({served.get(u) or by_batch.get(key, "") for u in ids})
             fh.write(json.dumps({
                 "task": fp["task"], "prompt_sha256": fp["prompt_sha256"], "examples_sha256": fp["examples_sha256"],

@@ -147,7 +147,7 @@ class Bedrock:
         return req
 
     def call(self, rows, extra=""):
-        """Returns (rows or None, partial call record)."""
+        """Returns (the raw reply: tool input or text, partial call record); call() parses it."""
         while True:
             try:
                 resp = self.client.converse(**self.request(rows, extra))
@@ -169,13 +169,9 @@ class Bedrock:
         r = RATES["bedrock"].get(self.args.model)
         prompt = rec["input_tokens"] + rec["cache_write_tokens"] + rec["cache_read_tokens"]
         rec["cost_usd"] = round((prompt * r["input"] + rec["output_tokens"] * r["output"]) / 1e6, 6) if r else ""
-        if rec["stop_reason"] in FILTERED:  # don't parse a cut-off fragment; call() records the filter
-            return [], rec
         blocks = resp["output"]["message"]["content"]
         tool_input = next((b["toolUse"]["input"] for b in blocks if "toolUse" in b), None)
-        if tool_input is not None:
-            return (parse_rows(tool_input) if isinstance(tool_input, str) else TASK.rows_from_reply(tool_input)), rec
-        return parse_rows("".join(b.get("text", "") for b in blocks)), rec
+        return (tool_input if tool_input is not None else "".join(b.get("text", "") for b in blocks)), rec
 
 
 TIER_MULTIPLIER = {"default": 1.0, "flex": 0.5, "priority": 1.75}  # Bedrock service tiers, applied to standard rates
@@ -218,9 +214,7 @@ class BedrockChat:
         r = RATES["bedrock"].get(self.args.model)
         m = TIER_MULTIPLIER.get(reply.get("service_tier", self.args.service_tier), 1.0)
         rec["cost_usd"] = round(m * (usage.get("prompt_tokens", 0) * r["input"] + rec["output_tokens"] * r["output"]) / 1e6, 6) if r else ""
-        if rec["stop_reason"] in FILTERED:
-            return [], rec
-        return parse_rows((choice.get("message") or {}).get("content") or ""), rec
+        return (choice.get("message") or {}).get("content") or "", rec
 
 
 class OpenAICompatible:
@@ -245,9 +239,7 @@ class OpenAICompatible:
         rec = {"model_served": reply.get("model", self.args.model), "mode": "json_schema" + ("-no-thinking" if self.args.no_thinking else ""),
                "stop_reason": choice.get("finish_reason"), "input_tokens": usage.get("prompt_tokens", 0),
                "output_tokens": usage.get("completion_tokens", 0), "cache_write_tokens": 0, "cache_read_tokens": 0, "cost_usd": ""}
-        if rec["stop_reason"] in FILTERED:
-            return [], rec
-        return parse_rows((choice.get("message") or {}).get("content") or ""), rec
+        return (choice.get("message") or {}).get("content") or "", rec
 
 
 class SageMaker:
@@ -281,9 +273,7 @@ class SageMaker:
         rec = {"model_served": model, "mode": "json_schema" + ("-no-thinking" if self.args.no_thinking else ""),
                "stop_reason": finish, "input_tokens": usage.get("prompt_tokens", 0),
                "output_tokens": usage.get("completion_tokens", 0), "cache_write_tokens": 0, "cache_read_tokens": 0}
-        if rec["stop_reason"] in FILTERED:
-            return [], rec
-        return parse_rows("".join(content)), rec
+        return "".join(content), rec
 
 
 T0 = time.perf_counter()  # reset at the start of the run; calls record their start relative to it
@@ -316,16 +306,17 @@ def call(backend, args, index, key, rows):
     for attempt in (1, 2, 3):  # one retry on an error or an unusable reply; teacher runs get one more on a length problem
         record["attempts"] = attempt
         try:
-            out, rec = backend.call(rows, extra)
-            out = [TASK.normalize(o) for o in TASK.attach_ids(out, rows)] if isinstance(out, list) else out
+            reply, rec = backend.call(rows, extra)
             for k in spent:  # every attempt's tokens count
                 spent[k] += rec.get(k) or 0
             record.update(rec, **{k: (round(v, 6) if k == "cost_usd" else v) for k, v in spent.items()})
             if rec.get("cost_usd") == "":
                 record["cost_usd"] = ""
-            if str(rec.get("stop_reason")) in FILTERED:  # a cut-off fragment is not the model's answer
+            if str(rec.get("stop_reason")) in FILTERED:  # checked before parsing: a cut-off fragment is not an answer
                 record["filtered"] = (record.get("filtered") or 0) + 1
                 raise RuntimeError(f"reply cut off by the provider's content filter (stop_reason {rec.get('stop_reason')})")
+            out = parse_rows(reply) if isinstance(reply, str) else TASK.rows_from_reply(reply)
+            out = [TASK.normalize(o) for o in TASK.attach_ids(out, rows)]
             if REQUIRED_FACTS and not fed_back and too_long(out):
                 fed_back = True
                 extra = ("\n\nYour previous answer broke these limits. Answer again, shorter, keeping the required facts:\n" +

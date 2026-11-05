@@ -116,6 +116,9 @@ def main():
     ap.add_argument("--region", default="us-east-1")
     ap.add_argument("--price-basis", default="regional", choices=["regional", "global"])
     args = ap.parse_args()
+    if args.task == "abstract-facts":
+        sys.exit("run the abstract task with run_model.py (Bedrock Converse): it handles the content filter, splits "
+                 "filtered batches and reaches Haiku 5.5, which this script's endpoint doesn't serve")
     rm.set_task(args.task, args.prompt, args.allow_no_examples, examples=args.examples)
 
     csv.field_size_limit(sys.maxsize)
