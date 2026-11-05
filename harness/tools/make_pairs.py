@@ -8,7 +8,7 @@ the model that served the call, and how many of its rows passed check_outputs.py
 The task, prompt and batch size come from the run's run.json, so batches are rebuilt exactly as
 the run made them; it stops if the prompt, examples or schema have changed since the run.
 
---mixed-batches SEED (abstract-facts) regroups the run's rows into batches of 1 to --max-batch
+--mixed-batches SEED regroups the run's rows into batches of 1 to --max-batch
 rows, sizes drawn with that seed, so the student learns any batch size. A regrouped batch's
 response is the teacher's rows for exactly those inputs.
 
@@ -91,9 +91,10 @@ def main():
     fp = rm.fingerprint()
     with open(a.out, "w") as fh:
         for key, batch in groups:
-            ids = [r["unit_id"] for r in batch]
-            if not all(u in outputs for u in ids):
+            batch = [r for r in batch if r["unit_id"] in outputs]  # an abstract without an answer drops out alone
+            if not batch:
                 continue
+            ids = [r["unit_id"] for r in batch]
             teachers = sorted({served.get(u) or by_batch.get(key, "") for u in ids})
             fh.write(json.dumps({
                 "task": fp["task"], "prompt_sha256": fp["prompt_sha256"], "examples_sha256": fp["examples_sha256"],
@@ -101,7 +102,7 @@ def main():
                 "batch": key, "teacher_model": ",".join(t for t in teachers if t),
                 "rows": len(ids), "rows_passing_check": sum(u not in failed for u in ids),
                 "system": rm.SYSTEM, "user": rm.user_message(batch),
-                "assistant": json.dumps({"rows": [outputs[u] for u in ids]}, ensure_ascii=False),
+                "assistant": json.dumps(rm.TASK.assistant_json([outputs[u] for u in ids]), ensure_ascii=False),
             }, ensure_ascii=False) + "\n")
             written += 1
     print(f"{written} pairs written to {a.out}", file=sys.stderr)

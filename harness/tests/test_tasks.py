@@ -70,18 +70,72 @@ def test_published_and_draft_fingerprints(tmp_path):
     assert rm.fingerprint()["published"]
 
 
-def test_abstract_batches_view_and_schema(tmp_path):
+def test_abstract_numbered_batches(tmp_path):  # 35e
     task = tasks.get("abstract-facts", data=abstract_data(tmp_path))
     rows = [{"unit_id": f"PMC{i}.1", "abstract": f"Text {i}.", "title": "hidden", "protocol": "0"} for i in range(23)]
-    assert [len(b) for _, b in task.batches(rows)] == [10, 10, 3]
-    assert [len(b) for _, b in task.batches(rows, size=7)] == [7, 7, 7, 2]
-    assert len(task.batches(rows, per_file=True)) == 23
+    assert [len(b) for _, b in task.batches(rows)] == [5, 5, 5, 5, 3]
+    assert [len(b) for _, b in task.batches(rows, size=10)] == [10, 10, 3] and len(task.batches(rows, per_file=True)) == 23
     assert task.batches(rows)[1][0] == ("batch-1", "abstract")
-    assert task.model_view(rows[0]) == {"unit_id": "PMC0.1", "abstract": "Text 0."}
+    assert task.user_message(rows[:2]) == "Abstract 1:\nText 0.\n\nAbstract 2:\nText 1."  # numbered text: no ids, no title, no JSON
+    teacher = task.user_message(rows[:2], {"PMC1.1": ["A trial of X."]})
+    assert "Required content" in teacher and '{"2": ["A trial of X."]}' in teacher
     api = task.api_schema()
-    fact = api["properties"]["rows"]["items"]["properties"]["about"]
-    assert fact["required"] == ["fact", "quote"] and fact["additionalProperties"] is False
-    assert "$ref" not in json.dumps(api)
+    answer = api["properties"]["answers"]["items"]
+    assert answer["required"] == ["abstract", "about", "findings"] and "unit_id" not in json.dumps(api)
+    assert answer["properties"]["about"]["required"] == ["fact", "quote"] and "$ref" not in json.dumps(api)
+
+
+def test_abstract_answers_matched_by_number(tmp_path):
+    task = tasks.get("abstract-facts", data=abstract_data(tmp_path))
+    batch = [{"unit_id": "A.1", "abstract": "a"}, {"unit_id": "B.1", "abstract": "b"}]
+    a1, a2 = {"about": {"fact": "one"}, "findings": []}, {"about": {"fact": "two"}, "findings": []}
+    reply = task.rows_from_reply({"answers": [{"abstract": 2, **a2}, {"abstract": "1", **a1}]})
+    assert task.attach_ids(reply, batch) == [{**a2, "unit_id": "B.1"}, {**a1, "unit_id": "A.1"}]
+    assert task.attach_ids([{"abstract": 1, **a1}], batch) == [{**a1, "unit_id": "A.1"}]  # B.1 left unanswered: a missing row
+    for bad in ([{"abstract": 0, **a1}, {"abstract": 1, **a2}],      # numbered from 0: rejected, never shifted
+                [{"abstract": 1, **a1}, {"abstract": 1, **a2}],      # repeated
+                [{"abstract": 3, **a1}],                             # out of range
+                [{"abstract": True, **a1}], [{**a1}]):               # not a number; unnumbered in a batch of two
+        with pytest.raises(ValueError):
+            task.attach_ids(bad, batch)
+    assert task.attach_ids(task.rows_from_reply(a1), batch[:1]) == [{**a1, "unit_id": "A.1"}]  # one abstract, unnumbered
+    assert task.assistant_json([{**a1, "unit_id": "A.1"}, {**a2, "unit_id": "B.1"}]) == {
+        "answers": [{"abstract": 1, **a1}, {"abstract": 2, **a2}]}
+
+
+def test_missing_findings_stay_missing(tmp_path):
+    import check_outputs
+    task = tasks.get("abstract-facts", data=abstract_data(tmp_path))
+    row = task.normalize({"unit_id": "A.1", "about": {"fact": "A trial.", "quote": ""}})
+    assert "findings" not in row and check_outputs.abstract_problems(row)
+
+
+def test_bedrock_tool_path_for_answers(tmp_path):
+    rm.set_task("abstract-facts", data=abstract_data(tmp_path), allow_no_examples=True)
+    rows = [{"unit_id": "A.1", "abstract": "a"}, {"unit_id": "B.1", "abstract": "b"}]
+    answers = [{"abstract": 1, "about": {"fact": "one", "quote": ""}, "findings": []},
+               {"abstract": 2, "about": {"fact": "two", "quote": ""}, "findings": []}]
+
+    class Client:
+        class exceptions:
+            ValidationException = type("VE", (Exception,), {})
+        def __init__(self, tool_input, stop="tool_use"):
+            self.tool_input, self.stop = tool_input, stop
+        def converse(self, **req):
+            assert req["toolConfig"]["toolChoice"] == {"tool": {"name": "record_rows"}}
+            return {"stopReason": self.stop, "usage": {"inputTokens": 10, "outputTokens": 5},
+                    "output": {"message": {"content": [{"toolUse": {"input": self.tool_input}}]}}}
+
+    args = SimpleNamespace(model="us.anthropic.claude-haiku-5-5", region="r", max_tokens=100)
+    for tool_input in ({"answers": answers}, {"answers": json.dumps(answers)}, json.dumps({"answers": answers})):
+        be = rm.Bedrock.__new__(rm.Bedrock)
+        be.args, be.client, be.mode, be.max_tokens = args, Client(tool_input), "tool", 100
+        record, out = rm.call(be, args, 0, ("batch-0", "abstract"), rows)
+        assert record["error"] == "" and [o["unit_id"] for o in out] == ["A.1", "B.1"] and out[0]["about"] == {"fact": "one"}
+    be.client = Client({"answers": '[{"abstract": 1, "ab'}, stop="content_filtered")
+    record, out = rm.call(be, args, 0, ("batch-0", "abstract"), rows)
+    assert out == [] and record["filtered"] == 2 and "content filter" in record["error"]
+    rm.set_task("file-summary")
 
 
 def test_abstract_normalize_and_limits(tmp_path):
@@ -89,28 +143,26 @@ def test_abstract_normalize_and_limits(tmp_path):
     row = {"unit_id": "PMC1.1", "about": {"fact": "A trial.", "quote": ""}, "findings": [{"fact": "X fell.", "quote": "x fell"}]}
     assert task.normalize(row) == {"unit_id": "PMC1.1", "about": {"fact": "A trial."}, "findings": [{"fact": "X fell.", "quote": "x fell"}]}
     long = {"unit_id": "PMC1.1", "about": {"fact": "a" * 251}, "findings": [{"fact": "ok", "quote": "q" * 201}]}
-    problems = task.too_long([long])
-    assert len(problems) == 2 and "251 characters" in problems[0] and "201 characters" in problems[1]
+    assert task.too_long([long]) == []  # 35c: no length retries
 
 
 def test_run_model_call_offline(tmp_path):
     rm.set_task("abstract-facts", data=abstract_data(tmp_path), allow_no_examples=True)
     rows = [{"unit_id": "PMC1.1", "abstract": "A trial found X."}, {"unit_id": "PMC2.1", "abstract": "A protocol."}]
-    reply = [{"unit_id": "PMC1.1", "about": {"fact": "A trial of X.", "quote": ""}, "findings": [{"fact": "X fell 10%.", "quote": "found X"}]},
-             {"unit_id": "PMC2.1", "about": {"fact": "A protocol.", "quote": ""}, "findings": []},
-             {"unit_id": "PMC1.1", "about": {"fact": "repeat"}, "findings": []}]
+    reply = ('```json\n{"answers": [{"abstract": 2, "about": {"fact": "A protocol.", "quote": ""}, "findings": []}, '
+             '{"abstract": 1, "about": {"fact": "A trial of X.", "quote": ""}, "findings": [{"fact": "X fell 10%.", "quote": "found X"}]}]}\n```')
     seen = {}
 
     class Fake:
         def call(self, batch, extra=""):
             seen["user"] = rm.user_message(batch)
-            return copy.deepcopy(reply), {"model_served": "fake", "mode": "json_schema", "input_tokens": 5, "output_tokens": 7}
+            return rm.parse_rows(reply), {"model_served": "fake", "mode": "json_schema", "input_tokens": 5, "output_tokens": 7}
 
     record, out = rm.call(Fake(), SimpleNamespace(model="fake"), 0, ("batch-0", "abstract"), rows)
-    assert record["error"] == "" and record["rows_out"] == 2 and record["dropped_rows"] == 1
-    assert json.loads(record["unit_ids"]) == ["PMC1.1", "PMC2.1"]
-    assert out[0]["about"] == {"fact": "A trial of X."} and out[1]["findings"] == []
-    assert json.loads(seen["user"].split("\n", 1)[1]) == rows
+    assert record["error"] == "" and record["rows_out"] == 2 and json.loads(record["unit_ids"]) == ["PMC1.1", "PMC2.1"]
+    assert seen["user"] == "Abstract 1:\nA trial found X.\n\nAbstract 2:\nA protocol."
+    by_id = {o["unit_id"]: o for o in out}
+    assert by_id["PMC1.1"]["findings"] == [{"fact": "X fell 10%.", "quote": "found X"}] and by_id["PMC2.1"]["about"] == {"fact": "A protocol."}
     rm.set_task("file-summary")
 
 

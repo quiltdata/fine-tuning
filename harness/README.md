@@ -42,7 +42,7 @@ examples and schema.
 | Task | Input | Output | Batches |
 | --- | --- | --- | --- |
 | `file-summary` (default) | a file excerpt and mentions | `what`, `summary`, `about`, `entities`, `refers_to`, `evidence` | one article folder and file type |
-| `abstract-facts` | a paper's main abstract, at most 4,096 UTF-8 bytes | one `about` fact and zero to two `findings`, each at most 250 characters with an optional quote | 10 abstracts (`--batch-size`) |
+| `abstract-facts` | papers' main abstracts, at most 4,096 UTF-8 bytes each, as numbered plain text | one JSON object of answers, each with its abstract's number: one `about` fact and zero to two `findings`, each with an optional quote; length reported, not limited (cost counts verbosity) | 5 abstracts per call (`--batch-size`); answers matched to abstracts by number |
 
 ### The abstract task
 
@@ -52,9 +52,10 @@ examples and schema.
 | Build inputs: main abstract, size, truncation, publication types, protocol flag | `tools/make_abstracts.py` | `inputs.csv`, `skipped.csv` |
 | Write the typed key (about, findings) | `tools/make_facts.py --task abstract-facts --split-label test` | `reference/facts.jsonl` |
 | Run a model | `tools/run_model.py --task abstract-facts` (Bedrock Converse, SageMaker or OpenAI-compatible) | `runs/<name>/…` |
-| Check validity | `tools/check_outputs.py --task abstract-facts` | pass/fail per row; quotes as a note |
+| Check validity (structure only; lengths reported, not judged) | `tools/check_outputs.py --task abstract-facts` | pass/fail per row; quotes as a note |
+| Exclude papers a baseline's content filter blocks (run that model first) | `tools/filtered.py set_dir run_dir` | `excluded.csv`, dropped for every model when scoring |
 | Score | `tools/score_abstracts.py` (twice: GPT-6.1 sol, then `--grader … --tag sonnet`) | `scores.csv`, `grades.jsonl`, `score.json` |
-| Teacher run to pairs, any batch size | `tools/make_pairs.py --mixed-batches SEED`, then `tools/make_sft.py` | `pairs.jsonl`, `train.jsonl` |
+| Teacher run to pairs (as the run batched them, or regrouped with `--mixed-batches SEED --max-batch 5`) | `tools/make_pairs.py`, then `tools/make_sft.py` | `pairs.jsonl`, `train.jsonl` |
 
 The input rules live in `tools/abstracts.py`: which abstract is the main one, how it is counted
 (UTF-8 bytes of the flattened text, section titles kept), truncation at 4,096 bytes on a whole
@@ -80,8 +81,8 @@ here: they are part of the evaluation and never reach the student.
 **Baselines on Claude** run through `run_model.py`'s Bedrock Converse backend
 (`--model us.anthropic.claude-haiku-5-5`, `us.anthropic.claude-opus-5-5`), both the same way: Haiku 5.5
 isn't served on the Anthropic-SDK Bedrock endpoint `run_claude.py` uses (it returns 404). Converse
-has no refusal fallback, so every row is the model's own. If `run_claude.py` is used (Opus only),
-pass `--no-fallback`.
+has no refusal fallback, so every row is the model's own. `run_claude.py` is for the file-summary task
+only; it refuses this one.
 
 ### Tests
 

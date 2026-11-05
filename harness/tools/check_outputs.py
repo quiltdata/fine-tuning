@@ -17,10 +17,10 @@ quote whose letters and digits match in order points at exactly the right text.
 quote_norm (the middle form) is kept for comparison.
 
 --task abstract-facts checks validity only, by code: the row parses and fits
-schemas/abstract_output.schema.json (one about fact, at most two findings, 250 characters a
-fact, 200 a quote), its unit_id is an input, and every input has one row. Quotes there are
-optional and not scored: one not found in the abstract is printed as a note and counted in the
-last line, but doesn't fail the row.
+schemas/abstract_output.schema.json (one about fact, at most two findings), its unit_id is an
+input, and every input has one row. Lengths are reported, not judged. Quotes there are optional
+and not scored: one not found in the abstract is printed as a note and counted, but doesn't fail
+the row.
 
 Usage: python3 check_outputs.py inputs.csv outputs.csv [--task file-summary|abstract-facts]
 """
@@ -60,9 +60,6 @@ def quote_found(q, source):
 
 
 ABSTRACT_SCHEMA = json.loads((Path(__file__).resolve().parent.parent / "schemas" / "abstract_output.schema.json").read_text())
-# Validity doesn't depend on the optional, unscored quote's length: that check is dropped here.
-VALIDITY_SCHEMA = json.loads(json.dumps(ABSTRACT_SCHEMA))
-VALIDITY_SCHEMA["$defs"]["fact"]["properties"]["quote"].pop("maxLength")
 ABSTRACT_LIST_COLUMNS = ["about", "findings"]
 
 
@@ -76,9 +73,9 @@ def parse_abstract_row(row):
 
 def abstract_problems(out):
     """Validity of one parsed abstract-task row, by code: the schema (one about fact, at most two
-    findings, 250 characters a fact). Quotes are optional and not scored, so their length isn't."""
+    findings). Lengths are not judged: cost per abstract already counts verbosity."""
     try:
-        jsonschema.validate(out, VALIDITY_SCHEMA)
+        jsonschema.validate(out, ABSTRACT_SCHEMA)
         return []
     except jsonschema.ValidationError as e:
         return [f"schema: {e.message}"[:160]]
@@ -94,7 +91,7 @@ def abstract_quotes(out, abstract):
 def main_abstract(inputs_path, outputs_path):
     csv.field_size_limit(sys.maxsize)
     inputs = {r["unit_id"]: r for r in csv.DictReader(open(inputs_path, newline=""))}
-    seen, failed, quotes, misses = set(), 0, 0, 0
+    seen, failed, quotes, misses, longest = set(), 0, 0, 0, 0
     for row in csv.DictReader(open(outputs_path, newline="")):
         uid, problems, notes = row.get("unit_id", ""), [], []
         try:
@@ -108,6 +105,8 @@ def main_abstract(inputs_path, outputs_path):
             problems.append("duplicate unit_id")
         elif out is not None:
             given, missing = abstract_quotes(out, inputs[uid]["abstract"])
+            longest = max([longest] + [len(f["fact"]) for f in [out.get("about")] + list(out.get("findings") or [])
+                                       if isinstance(f, dict) and isinstance(f.get("fact"), str)])
             quotes, misses = quotes + len(given), misses + len(missing)
             notes = [f"note: quote not found (not scored): {q[:60]!r}" for q in missing]
         seen.add(uid)
@@ -117,7 +116,8 @@ def main_abstract(inputs_path, outputs_path):
         failed += 1
         print(f"FAIL  {uid}\n      no output row")
     print(f"\n{len(inputs) - failed if failed <= len(inputs) else 0}/{len(inputs)} input rows pass"
-          f"\n{quotes - misses}/{quotes} quotes found in their abstract (side metric, not scored)")
+          f"\n{quotes - misses}/{quotes} quotes found in their abstract (side metric, not scored)"
+          f"\nlongest fact: {longest} characters (reported, not judged)")
     sys.exit(1 if failed else 0)
 
 

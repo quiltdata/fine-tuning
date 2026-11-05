@@ -12,7 +12,9 @@ so a training set never shares an article with a test set.
 
 --articles-only (the abstract task) drops the supplement requirement: each kept article gives
 one unit, its JATS XML, and target_rows counts articles. make_abstracts.py reads the result;
-articles without a main abstract drop out there, so sample about 1% over the target.
+articles without a main abstract drop out there. Without the supplement requirement the sample
+includes editorials, letters and the like: in a 600-article sample, 18.5% had no main abstract, so
+sample about 25% over the target.
 
 Writes objects.txt (for make_inputs.py) and articles.csv (one row per article:
 PMCID, version, license, title, units chosen, PMID).

@@ -86,8 +86,8 @@ def call(client, args, index, key, rows):
         record["error"] = f"stop_reason {resp.stop_reason}"
         return record, []
     try:
-        out = [rm.TASK.normalize(o) for o in json.loads(next(b.text for b in resp.content if b.type == "text"))["rows"]]
-    except (StopIteration, json.JSONDecodeError, KeyError) as e:
+        out = [rm.TASK.normalize(o) for o in rm.TASK.attach_ids(rm.parse_rows(next(b.text for b in resp.content if b.type == "text")), rows)]
+    except (StopIteration, ValueError) as e:
         record["error"] = f"unparseable output: {e}"[:300]
         return record, []
     wanted = {r["unit_id"] for r in rows}
@@ -116,6 +116,9 @@ def main():
     ap.add_argument("--region", default="us-east-1")
     ap.add_argument("--price-basis", default="regional", choices=["regional", "global"])
     args = ap.parse_args()
+    if args.task == "abstract-facts":
+        sys.exit("run the abstract task with run_model.py (Bedrock Converse): it handles the content filter, splits "
+                 "filtered batches and reaches Haiku 5.5, which this script's endpoint doesn't serve")
     rm.set_task(args.task, args.prompt, args.allow_no_examples, examples=args.examples)
 
     csv.field_size_limit(sys.maxsize)

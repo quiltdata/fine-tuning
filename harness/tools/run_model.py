@@ -63,9 +63,8 @@ ROOT = Path(__file__).resolve().parent.parent
 RATES = json.loads((ROOT / "tools" / "model_rates.json").read_text())
 CALL_COLUMNS = ["batch", "prefix", "file_type", "rows", "unit_ids", "model_requested", "model_served", "mode", "attempts",
                 "length_retry", "stop_reason", "input_tokens", "output_tokens", "cache_write_tokens", "cache_read_tokens",
-                "rows_out", "start_s", "latency_s", "cost_usd", "dropped_rows", "error"]
-TEXT_INSTRUCTION = ('\n\nReply with only a JSON object of the form {"rows": [...]}, one object per input row with '
-                    "the output columns above, and nothing else.")
+                "rows_out", "start_s", "latency_s", "cost_usd", "dropped_rows", "filtered", "split_from", "error"]
+FILTERED = {"content_filtered", "content_filter"}  # the provider's filter cut the reply off (Bedrock, OpenAI-style)
 strip = tasks.strip
 
 # The active task. Importers (make_pairs.py, sample_rft.py, select_rft.py) call set_task() and read
@@ -114,18 +113,15 @@ def user_message(rows, required=None):
 
 
 def parse_rows(text):
-    """Rows from a JSON reply, tolerating code fences, reasoning before the JSON, or a bare list."""
+    """Output rows from a JSON reply in the active task's form, tolerating code fences, reasoning
+    before the JSON, or a bare list."""
     text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.S).strip()
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
     for candidate in (text, text[text.find("{"): text.rfind("}") + 1], text[text.find("["): text.rfind("]") + 1]):
         try:
-            data = json.loads(candidate)
+            return TASK.rows_from_reply(json.loads(candidate))
         except (json.JSONDecodeError, ValueError):
             continue
-        if isinstance(data, dict) and isinstance(data.get("rows"), list):
-            return data["rows"]
-        if isinstance(data, list):
-            return data
     raise ValueError("no JSON rows in reply")
 
 
@@ -147,11 +143,11 @@ class Bedrock:
             req.update(system=[{"text": SYSTEM + "\n\nAnswer only by calling the `record_rows` tool."}],
                        toolConfig={**tool, "toolChoice": {"auto": {}}})
         else:
-            req.update(system=[{"text": SYSTEM + TEXT_INSTRUCTION}])
+            req.update(system=[{"text": SYSTEM + TASK.text_instruction}])
         return req
 
     def call(self, rows, extra=""):
-        """Returns (rows or None, partial call record)."""
+        """Returns (the raw reply: tool input or text, partial call record); call() parses it."""
         while True:
             try:
                 resp = self.client.converse(**self.request(rows, extra))
@@ -175,12 +171,7 @@ class Bedrock:
         rec["cost_usd"] = round((prompt * r["input"] + rec["output_tokens"] * r["output"]) / 1e6, 6) if r else ""
         blocks = resp["output"]["message"]["content"]
         tool_input = next((b["toolUse"]["input"] for b in blocks if "toolUse" in b), None)
-        if tool_input is not None:
-            out = tool_input.get("rows") if isinstance(tool_input, dict) else tool_input
-            if isinstance(out, str):  # some models put the table in the tool call as a JSON string
-                out = parse_rows(out)
-            return out, rec
-        return parse_rows("".join(b.get("text", "") for b in blocks)), rec
+        return (tool_input if tool_input is not None else "".join(b.get("text", "") for b in blocks)), rec
 
 
 TIER_MULTIPLIER = {"default": 1.0, "flex": 0.5, "priority": 1.75}  # Bedrock service tiers, applied to standard rates
@@ -223,7 +214,7 @@ class BedrockChat:
         r = RATES["bedrock"].get(self.args.model)
         m = TIER_MULTIPLIER.get(reply.get("service_tier", self.args.service_tier), 1.0)
         rec["cost_usd"] = round(m * (usage.get("prompt_tokens", 0) * r["input"] + rec["output_tokens"] * r["output"]) / 1e6, 6) if r else ""
-        return parse_rows((choice.get("message") or {}).get("content") or ""), rec
+        return (choice.get("message") or {}).get("content") or "", rec
 
 
 class OpenAICompatible:
@@ -248,7 +239,7 @@ class OpenAICompatible:
         rec = {"model_served": reply.get("model", self.args.model), "mode": "json_schema" + ("-no-thinking" if self.args.no_thinking else ""),
                "stop_reason": choice.get("finish_reason"), "input_tokens": usage.get("prompt_tokens", 0),
                "output_tokens": usage.get("completion_tokens", 0), "cache_write_tokens": 0, "cache_read_tokens": 0, "cost_usd": ""}
-        return parse_rows((choice.get("message") or {}).get("content") or ""), rec
+        return (choice.get("message") or {}).get("content") or "", rec
 
 
 class SageMaker:
@@ -282,7 +273,7 @@ class SageMaker:
         rec = {"model_served": model, "mode": "json_schema" + ("-no-thinking" if self.args.no_thinking else ""),
                "stop_reason": finish, "input_tokens": usage.get("prompt_tokens", 0),
                "output_tokens": usage.get("completion_tokens", 0), "cache_write_tokens": 0, "cache_read_tokens": 0}
-        return parse_rows("".join(content)), rec
+        return "".join(content), rec
 
 
 T0 = time.perf_counter()  # reset at the start of the run; calls record their start relative to it
@@ -315,13 +306,17 @@ def call(backend, args, index, key, rows):
     for attempt in (1, 2, 3):  # one retry on an error or an unusable reply; teacher runs get one more on a length problem
         record["attempts"] = attempt
         try:
-            out, rec = backend.call(rows, extra)
-            out = [TASK.normalize(o) for o in out] if isinstance(out, list) else out
+            reply, rec = backend.call(rows, extra)
             for k in spent:  # every attempt's tokens count
                 spent[k] += rec.get(k) or 0
             record.update(rec, **{k: (round(v, 6) if k == "cost_usd" else v) for k, v in spent.items()})
             if rec.get("cost_usd") == "":
                 record["cost_usd"] = ""
+            if str(rec.get("stop_reason")) in FILTERED:  # checked before parsing: a cut-off fragment is not an answer
+                record["filtered"] = (record.get("filtered") or 0) + 1
+                raise RuntimeError(f"reply cut off by the provider's content filter (stop_reason {rec.get('stop_reason')})")
+            out = parse_rows(reply) if isinstance(reply, str) else TASK.rows_from_reply(reply)
+            out = [TASK.normalize(o) for o in TASK.attach_ids(out, rows)]
             if REQUIRED_FACTS and not fed_back and too_long(out):
                 fed_back = True
                 extra = ("\n\nYour previous answer broke these limits. Answer again, shorter, keeping the required facts:\n" +
@@ -345,6 +340,23 @@ def call(backend, args, index, key, rows):
                 break
     record.update(latency_s=round(time.perf_counter() - start, 3), rows_out=0)
     return record, []
+
+
+def split_filtered(backend, args, results, work, pool):
+    """Retries, one row per call, every batch of several rows the content filter blocked, so only the
+    row that trips the filter is lost. The same for every model. Returns the new (record, rows) pairs;
+    their records carry split_from, the blocked batch's number."""
+    redo = [(i, r) for (rec, outs), (i, (_, rows)) in zip(results, enumerate(work))
+            if not outs and rec.get("filtered") and len(rows) > 1 for r in rows]
+    if not redo:
+        return []
+    start = len(work)
+    done = list(pool.map(lambda j: call(backend, args, start + j, (redo[j][1].get("prefix", f"split-{redo[j][0]}"),
+                                                                   redo[j][1].get("file_type", "")), [redo[j][1]]),
+                         range(len(redo))))
+    for (rec, _), (i, _) in zip(done, redo):
+        rec["split_from"] = i
+    return done
 
 
 def main():
@@ -399,6 +411,7 @@ def main():
         first, work_rest = [], [(i, k, r) for i, (k, r) in enumerate(work)]
     with ThreadPoolExecutor(args.workers) as pool:
         results = first + list(pool.map(lambda w: call(backend, args, *w), work_rest))
+        results += split_filtered(backend, args, results, work, pool)
     wall = time.perf_counter() - wall
 
     instance = None
@@ -445,6 +458,10 @@ def main():
         "modes": sorted({c.get("mode") for c in calls if c.get("mode")}),
         "input_rows": sum(len(r) for _, r in work), "output_rows": sum(len(o) for _, o in results),
         "calls": len(calls), "calls_ok": sum(1 for c in calls if not c["error"]),
+        "calls_filtered": sum(1 for c in calls if c.get("filtered") and c["error"]),
+        "rows_filtered": sum(c["rows"] for c in calls if c.get("filtered") and c["error"]
+                             and (c.get("split_from") is not None or c["rows"] == 1)),
+        "batches_split": len({c["split_from"] for c in calls if c.get("split_from") is not None}),
         "dropped_rows": sum(c.get("dropped_rows") or 0 for c in calls),
         "input_tokens": total("input_tokens"), "output_tokens": total("output_tokens"),
         "cache_write_tokens": total("cache_write_tokens"), "cache_read_tokens": total("cache_read_tokens"),

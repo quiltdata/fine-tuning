@@ -2,9 +2,11 @@
 
   file-summary    the earlier summarizer: one row per file, batches of one article folder and file
                   type (prompts/summarizer.md, schemas/output.schema.json).
-  abstract-facts  the abstract task: per abstract, one `about` fact and zero to two `findings`, each
-                  in the model's own words, at most 250 characters, with an optional quote (at most
-                  200). The model sees only unit_id and abstract; batches of ten in input order.
+  abstract-facts  the abstract task: five abstracts per call by default, as plain numbered text;
+                  the model returns one JSON object of answers, each with its abstract's number, one
+                  `about` fact and zero to two `findings` in its own words, with an optional quote. The
+                  harness matches answers to abstracts by number. Length is reported, not limited or
+                  retried.
 
 Where prompts live. The file-summary prompts are in harness/prompts/. The abstract task's
 student-facing prompt and examples are data, not code: they are published in the public data
@@ -30,7 +32,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DATA_ENV = "FINE_TUNING_DATA"
 UNSUPPORTED = {"$schema", "$id", "title", "description", "minLength", "maxLength", "minItems", "maxItems", "pattern"}
-FACT_CHARS = 250
 QUOTE_CHARS = 200
 
 
@@ -162,6 +163,27 @@ class Task:
         """An output row as returned, made ready for the row schema."""
         return row
 
+    text_instruction = ('\n\nReply with only a JSON object of the form {"rows": [...]}, one object per input row with '
+                        "the output columns above, and nothing else.")
+
+    def rows_from_reply(self, data):
+        """Output rows from a parsed reply: a {"rows": [...]} table, or a bare list of rows."""
+        if isinstance(data, dict) and "rows" in data:
+            data = data["rows"]
+            if isinstance(data, str):  # some models put the table in a tool call as a JSON string
+                data = json.loads(data)
+        if isinstance(data, list):
+            return data
+        raise ValueError("no JSON rows in reply")
+
+    def attach_ids(self, out, batch):
+        """Output rows with their unit_id: the model copies it in the table form."""
+        return out
+
+    def assistant_json(self, rows):
+        """The assistant turn for training on these rows, as the model is asked to answer."""
+        return {"rows": rows}
+
 
 class FileSummary(Task):
     name = "file-summary"
@@ -209,35 +231,86 @@ class AbstractFacts(Task):
     list_columns = ("about", "findings")
     out_columns = ("unit_id", "about", "findings")
     requires_examples = True
-    batch_size = 10
-    required_note = ("Required content: each output row must convey these facts about its abstract, the about fact and the "
-                     "findings, stated in your own words. Each fact stays one claim of at most 250 characters, enforced by "
-                     "code; quotes stay optional, verbatim and at most 200 characters.")
+    required_note = ("Required content: each answer must convey these facts about its abstract, the about fact and the "
+                     "findings, stated in your own words. Each fact stays one claim; quotes stay optional and verbatim.")
+    text_instruction = ('\n\nReply with only a JSON object of the form {"answers": [{"abstract": 1, "about": {...}, '
+                        '"findings": [...]}, ...]}, one answer per abstract, and nothing else.')
+    batch_size = 5
 
     def batches(self, rows, per_file=False, size=None):
-        """Fixed-size batches in input order (one row each with per_file); keys are ("batch-<n>", "abstract")."""
+        """Batches of `size` abstracts in input order (default 5; 1 with per_file); keys ("batch-<n>", "abstract")."""
         n = 1 if per_file else (size or self.batch_size)
         return [((f"batch-{i // n}", "abstract"), rows[i:i + n]) for i in range(0, len(rows), n)]
 
-    def model_view(self, r):
-        return {"unit_id": r["unit_id"], "abstract": r["abstract"]}
+    def user_message(self, rows, required=None):
+        """The abstracts as plain text, numbered from 1: no ids, no JSON. A teacher run adds, by number,
+        the facts each answer must convey; make_pairs.py never passes them, so the student never sees them."""
+        msg = "\n\n".join(f"Abstract {i}:\n{r['abstract']}" for i, r in enumerate(rows, 1))
+        facts = {str(i): required[r["unit_id"]] for i, r in enumerate(rows, 1) if required and required.get(r["unit_id"])}
+        if facts:
+            msg += "\n\n" + self.required_note + "\n" + json.dumps(facts, ensure_ascii=False)
+        return msg
 
     def api_schema(self):
         """Written out rather than derived: strict structured output (Bedrock Chat Completions) rejects
-        optional properties and $ref, so `quote` is always present and "" means no quote."""
+        optional properties and $ref, so `quote` is always present and "" means no quote. Answers carry
+        the abstract's number, not an id: the harness knows which abstract each number is."""
         fact = {"type": "object", "properties": {"fact": {"type": "string"}, "quote": {"type": "string"}},
                 "required": ["fact", "quote"], "additionalProperties": False}
-        row = {"type": "object", "properties": {"unit_id": {"type": "string"}, "about": fact,
-                                                "findings": {"type": "array", "items": fact}},
-               "required": ["unit_id", "about", "findings"], "additionalProperties": False}
-        return {"type": "object", "properties": {"rows": {"type": "array", "items": row}},
-                "required": ["rows"], "additionalProperties": False}
+        answer = {"type": "object", "properties": {"abstract": {"type": "integer"}, "about": fact,
+                                                   "findings": {"type": "array", "items": fact}},
+                  "required": ["abstract", "about", "findings"], "additionalProperties": False}
+        return {"type": "object", "properties": {"answers": {"type": "array", "items": answer}},
+                "required": ["answers"], "additionalProperties": False}
+
+    def rows_from_reply(self, data):
+        """The answers: {"answers": [...]}, a bare list, or one answer object (one abstract)."""
+        if isinstance(data, dict) and "answers" in data:
+            data = data["answers"]
+            if isinstance(data, str):
+                data = json.loads(data)
+        if isinstance(data, dict) and "about" in data:
+            return [data]
+        if isinstance(data, list):
+            return data
+        raise ValueError("no answers in reply")
+
+    def attach_ids(self, out, batch):
+        """Each answer gets the id of the abstract its number names. If any number is missing, not a whole
+        number, outside 1..len(batch) or repeated, the reply is rejected (call() retries it): an
+        off-by-one numbering would otherwise attach answers to the wrong abstracts. With one abstract,
+        an unnumbered answer is taken as its answer. An abstract left without an answer is a missing row."""
+        answers = [o for o in out if isinstance(o, dict)]
+        numbers = []
+        for o in answers:
+            n = o.get("abstract", 1 if len(batch) == 1 else None)
+            if isinstance(n, bool) or not (isinstance(n, int) or (isinstance(n, str) and n.strip().isdigit())):
+                raise ValueError(f"answer numbered {n!r}; expected 1 to {len(batch)}")
+            numbers.append(int(n))
+        if any(not 1 <= n <= len(batch) for n in numbers) or len(set(numbers)) != len(numbers):
+            raise ValueError(f"answers numbered {numbers} for {len(batch)} abstracts")
+        return [{**{k: v for k, v in o.items() if k != "abstract"}, "unit_id": batch[n - 1]["unit_id"]}
+                for o, n in zip(answers, numbers)]
+
+    def assistant_json(self, rows):
+        """The answers numbered in batch order, without ids, as the model gives them."""
+        return {"answers": [{"abstract": i, **{k: v for k, v in r.items() if k != "unit_id"}} for i, r in enumerate(rows, 1)]}
 
     def normalize(self, row):
-        """Drops empty or missing quotes, so "" from strict structured output reads as no quote."""
+        """Drops empty or missing quotes, so "" from strict structured output reads as no quote, and
+        decodes a fact or findings list a model returned as a JSON string (seen from Opus 5.5 when
+        Bedrock won't force the tool). The same for every model."""
         if not isinstance(row, dict):
             return row
+        def decoded(v):
+            if isinstance(v, str):
+                try:
+                    return json.loads(v)
+                except json.JSONDecodeError:
+                    return v
+            return v
         def fact(f):
+            f = decoded(f)
             if not isinstance(f, dict):
                 return f
             f = {k: v for k, v in f.items() if not (k == "quote" and not (isinstance(v, str) and v.strip()))}
@@ -245,24 +318,15 @@ class AbstractFacts(Task):
         out = dict(row)
         if "about" in out:
             out["about"] = fact(out["about"])
+        if "findings" in out:  # a missing key stays missing, so the check fails the answer
+            out["findings"] = decoded(out["findings"])
         if isinstance(out.get("findings"), list):
             out["findings"] = [fact(f) for f in out["findings"]]
         return out
 
     def too_long(self, out):
-        problems = []
-        for o in out:
-            if not isinstance(o, dict):
-                continue
-            facts = [("about", o.get("about"))] + [(f"finding {i + 1}", f) for i, f in enumerate(o.get("findings") or [])]
-            for label, f in facts:
-                if not isinstance(f, dict):
-                    continue
-                if len(f.get("fact") or "") > FACT_CHARS:
-                    problems.append(f'{o.get("unit_id")}: {label} is {len(f["fact"])} characters, the limit is {FACT_CHARS}')
-                if len(f.get("quote") or "") > QUOTE_CHARS:
-                    problems.append(f'{o.get("unit_id")}: the {label} quote is {len(f["quote"])} characters, the limit is {QUOTE_CHARS}')
-        return problems
+        """No length retries: a long answer already costs more."""
+        return []
 
 
 TASKS = {t.name: t for t in (FileSummary, AbstractFacts)}
