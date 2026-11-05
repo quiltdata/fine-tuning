@@ -31,11 +31,10 @@ class Stub(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         Stub.requests.append(body)
-        table = json.loads(body["messages"][1]["content"].split("\n", 1)[1])
-        rows = [{"unit_id": r["unit_id"], "about": {"fact": "A mouse study of drug Z.", "quote": ""},
-                 "findings": [] if "will" in r["abstract"] else [{"fact": "Drug Z slowed tumour growth.", "quote": "lowered tumour growth"}]}
-                for r in table]
-        reply = {"model": "stub", "choices": [{"message": {"content": json.dumps({"rows": rows})}, "finish_reason": "stop"}],
+        abstract = body["messages"][1]["content"]  # one abstract, plain text (35d)
+        answer = {"about": {"fact": "A mouse study of drug Z.", "quote": ""},
+                  "findings": [] if "will" in abstract else [{"fact": "Drug Z slowed tumour growth.", "quote": "lowered tumour growth"}]}
+        reply = {"model": "stub", "choices": [{"message": {"content": json.dumps(answer)}, "finish_reason": "stop"}],
                  "usage": {"prompt_tokens": 100, "completion_tokens": 50}}
         data = json.dumps(reply).encode()
         self.send_response(200)
@@ -69,15 +68,15 @@ def test_abstract_task_end_to_end(tmp_path, monkeypatch, capsys, server):
         w.writeheader()
         w.writerows(ABSTRACTS)
 
-    # run: 13 abstracts in batches of 10 and 3, thinking off, through the stub server
+    # run: 13 abstracts, one per call, thinking off, through the stub server
     monkeypatch.setattr(sys, "argv", ["run_model.py", str(sd / "inputs.csv"), str(rd), "--model", "stub", "--openai-url", server,
                                       "--no-thinking", "--task", "abstract-facts", "--workers", "2"])
     rm.main()
     run = json.loads((rd / "run.json").read_text())
     assert run["task"] == "abstract-facts" and run["published"] is True and run["examples_sha256"]
     assert run["prompt"] == "abstract_facts.md" and str(tmp_path) not in json.dumps(run["prompt"])
-    assert run["output_rows"] == 13 and run["calls_ok"] == 2
-    assert sorted(len(json.loads(r["messages"][1]["content"].split("\n", 1)[1])) for r in Stub.requests) == [3, 10]
+    assert run["output_rows"] == 13 and run["calls_ok"] == 13
+    assert sorted(r["messages"][1]["content"] for r in Stub.requests) == sorted(a["abstract"] for a in ABSTRACTS)
     assert all(r["messages"][0]["content"] == "TEST PROMPT\n\nTEST EXAMPLES\n" for r in Stub.requests)
     assert all(r["chat_template_kwargs"] == {"enable_thinking": False} for r in Stub.requests)
     out = {r["unit_id"]: r for r in csv.DictReader(open(rd / "outputs.csv", newline=""))}
@@ -91,12 +90,17 @@ def test_abstract_task_end_to_end(tmp_path, monkeypatch, capsys, server):
     assert e.value.code == 0 and "13/13 input rows pass" in check and "12/12 quotes found" in check
     (rd / "check.txt").write_text(check)
 
-    # pairs, regrouped into batches of 1-10; the student's user turn carries no required facts
+    # pairs, one per abstract: the user turn is the abstract alone, the answer has no id
+    monkeypatch.setattr(sys, "argv", ["make_pairs.py", str(sd / "inputs.csv"), str(rd), str(tmp_path / "x.jsonl"), "--mixed-batches", "7"])
+    with pytest.raises(SystemExit, match="one abstract per call"):
+        make_pairs.main()
     pairs_path = tmp_path / "pairs.jsonl"
-    monkeypatch.setattr(sys, "argv", ["make_pairs.py", str(sd / "inputs.csv"), str(rd), str(pairs_path), "--mixed-batches", "7"])
+    monkeypatch.setattr(sys, "argv", ["make_pairs.py", str(sd / "inputs.csv"), str(rd), str(pairs_path)])
     make_pairs.main()
     pairs = [json.loads(l) for l in open(pairs_path)]
-    assert sum(p["rows"] for p in pairs) == 13 and all(p["rows"] == p["rows_passing_check"] for p in pairs)
+    assert len(pairs) == 13 and all(p["rows"] == 1 == p["rows_passing_check"] for p in pairs)
+    assert {p["user"] for p in pairs} == {a["abstract"] for a in ABSTRACTS}
+    assert all(set(json.loads(p["assistant"])) == {"about", "findings"} for p in pairs)
     assert all(p["system"] == "TEST PROMPT\n\nTEST EXAMPLES\n" and "Required content" not in p["user"] for p in pairs)
     assert all(p["teacher_model"] == "stub" and p["published"] for p in pairs)
     make_sft.main(str(pairs_path), str(tmp_path / "train.jsonl"), data=data)

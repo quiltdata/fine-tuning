@@ -64,8 +64,6 @@ RATES = json.loads((ROOT / "tools" / "model_rates.json").read_text())
 CALL_COLUMNS = ["batch", "prefix", "file_type", "rows", "unit_ids", "model_requested", "model_served", "mode", "attempts",
                 "length_retry", "stop_reason", "input_tokens", "output_tokens", "cache_write_tokens", "cache_read_tokens",
                 "rows_out", "start_s", "latency_s", "cost_usd", "dropped_rows", "error"]
-TEXT_INSTRUCTION = ('\n\nReply with only a JSON object of the form {"rows": [...]}, one object per input row with '
-                    "the output columns above, and nothing else.")
 strip = tasks.strip
 
 # The active task. Importers (make_pairs.py, sample_rft.py, select_rft.py) call set_task() and read
@@ -114,18 +112,15 @@ def user_message(rows, required=None):
 
 
 def parse_rows(text):
-    """Rows from a JSON reply, tolerating code fences, reasoning before the JSON, or a bare list."""
+    """Output rows from a JSON reply in the active task's form, tolerating code fences, reasoning
+    before the JSON, or a bare list."""
     text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.S).strip()
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
     for candidate in (text, text[text.find("{"): text.rfind("}") + 1], text[text.find("["): text.rfind("]") + 1]):
         try:
-            data = json.loads(candidate)
+            return TASK.rows_from_reply(json.loads(candidate))
         except (json.JSONDecodeError, ValueError):
             continue
-        if isinstance(data, dict) and isinstance(data.get("rows"), list):
-            return data["rows"]
-        if isinstance(data, list):
-            return data
     raise ValueError("no JSON rows in reply")
 
 
@@ -147,7 +142,7 @@ class Bedrock:
             req.update(system=[{"text": SYSTEM + "\n\nAnswer only by calling the `record_rows` tool."}],
                        toolConfig={**tool, "toolChoice": {"auto": {}}})
         else:
-            req.update(system=[{"text": SYSTEM + TEXT_INSTRUCTION}])
+            req.update(system=[{"text": SYSTEM + TASK.text_instruction}])
         return req
 
     def call(self, rows, extra=""):
@@ -176,10 +171,7 @@ class Bedrock:
         blocks = resp["output"]["message"]["content"]
         tool_input = next((b["toolUse"]["input"] for b in blocks if "toolUse" in b), None)
         if tool_input is not None:
-            out = tool_input.get("rows") if isinstance(tool_input, dict) else tool_input
-            if isinstance(out, str):  # some models put the table in the tool call as a JSON string
-                out = parse_rows(out)
-            return out, rec
+            return (parse_rows(tool_input) if isinstance(tool_input, str) else TASK.rows_from_reply(tool_input)), rec
         return parse_rows("".join(b.get("text", "") for b in blocks)), rec
 
 
@@ -316,7 +308,7 @@ def call(backend, args, index, key, rows):
         record["attempts"] = attempt
         try:
             out, rec = backend.call(rows, extra)
-            out = [TASK.normalize(o) for o in out] if isinstance(out, list) else out
+            out = [TASK.normalize(o) for o in TASK.attach_ids(out, rows)] if isinstance(out, list) else out
             for k in spent:  # every attempt's tokens count
                 spent[k] += rec.get(k) or 0
             record.update(rec, **{k: (round(v, 6) if k == "cost_usd" else v) for k, v in spent.items()})

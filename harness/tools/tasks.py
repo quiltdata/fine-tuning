@@ -2,9 +2,10 @@
 
   file-summary    the earlier summarizer: one row per file, batches of one article folder and file
                   type (prompts/summarizer.md, schemas/output.schema.json).
-  abstract-facts  the abstract task: per abstract, one `about` fact and zero to two `findings`, each
-                  in the model's own words, with an optional quote. Length is reported, not limited
-                  or retried (35c). The model sees only unit_id and abstract; batches of ten in input order.
+  abstract-facts  the abstract task: one abstract per call, as plain text; the model returns one JSON
+                  object, one `about` fact and zero to two `findings`, each in its own words, with an
+                  optional quote (35d). The harness attaches the abstract's id. Length is reported, not
+                  limited or retried (35c).
 
 Where prompts live. The file-summary prompts are in harness/prompts/. The abstract task's
 student-facing prompt and examples are data, not code: they are published in the public data
@@ -161,6 +162,27 @@ class Task:
         """An output row as returned, made ready for the row schema."""
         return row
 
+    text_instruction = ('\n\nReply with only a JSON object of the form {"rows": [...]}, one object per input row with '
+                        "the output columns above, and nothing else.")
+
+    def rows_from_reply(self, data):
+        """Output rows from a parsed reply: a {"rows": [...]} table, or a bare list of rows."""
+        if isinstance(data, dict) and "rows" in data:
+            data = data["rows"]
+            if isinstance(data, str):  # some models put the table in a tool call as a JSON string
+                data = json.loads(data)
+        if isinstance(data, list):
+            return data
+        raise ValueError("no JSON rows in reply")
+
+    def attach_ids(self, out, batch):
+        """Output rows with their unit_id: the model copies it in the table form."""
+        return out
+
+    def assistant_json(self, rows):
+        """The assistant turn for training on these rows, as the model is asked to answer."""
+        return {"rows": rows}
+
 
 class FileSummary(Task):
     name = "file-summary"
@@ -208,28 +230,51 @@ class AbstractFacts(Task):
     list_columns = ("about", "findings")
     out_columns = ("unit_id", "about", "findings")
     requires_examples = True
-    batch_size = 10
-    required_note = ("Required content: each output row must convey these facts about its abstract, the about fact and the "
+    required_note = ("Required content: your answer must convey these facts about the abstract, the about fact and the "
                      "findings, stated in your own words. Each fact stays one claim; quotes stay optional and verbatim.")
+    text_instruction = ('\n\nReply with only a JSON object of the form {"about": {...}, "findings": [...]}, '
+                        "and nothing else.")
 
     def batches(self, rows, per_file=False, size=None):
-        """Fixed-size batches in input order (one row each with per_file); keys are ("batch-<n>", "abstract")."""
-        n = 1 if per_file else (size or self.batch_size)
-        return [((f"batch-{i // n}", "abstract"), rows[i:i + n]) for i in range(0, len(rows), n)]
+        """One abstract per call (35d); keys are ("abstract-<n>", "abstract")."""
+        if size not in (None, 1):
+            raise SystemExit("abstract-facts sends one abstract per call (35d); --batch-size must be 1 or unset")
+        return [((f"abstract-{i}", "abstract"), [r]) for i, r in enumerate(rows)]
 
-    def model_view(self, r):
-        return {"unit_id": r["unit_id"], "abstract": r["abstract"]}
+    def user_message(self, rows, required=None):
+        """The abstract's text, nothing else. A teacher run adds the facts the answer must convey;
+        make_pairs.py never passes them, so the student never sees them."""
+        (row,) = rows
+        msg = row["abstract"]
+        facts = required.get(row["unit_id"]) if required else None
+        if facts:
+            msg += "\n\n" + self.required_note + "\n" + json.dumps(facts, ensure_ascii=False)
+        return msg
 
     def api_schema(self):
         """Written out rather than derived: strict structured output (Bedrock Chat Completions) rejects
-        optional properties and $ref, so `quote` is always present and "" means no quote."""
+        optional properties and $ref, so `quote` is always present and "" means no quote. One object,
+        no id: the harness knows which abstract it sent."""
         fact = {"type": "object", "properties": {"fact": {"type": "string"}, "quote": {"type": "string"}},
                 "required": ["fact", "quote"], "additionalProperties": False}
-        row = {"type": "object", "properties": {"unit_id": {"type": "string"}, "about": fact,
-                                                "findings": {"type": "array", "items": fact}},
-               "required": ["unit_id", "about", "findings"], "additionalProperties": False}
-        return {"type": "object", "properties": {"rows": {"type": "array", "items": row}},
-                "required": ["rows"], "additionalProperties": False}
+        return {"type": "object", "properties": {"about": fact, "findings": {"type": "array", "items": fact}},
+                "required": ["about", "findings"], "additionalProperties": False}
+
+    def rows_from_reply(self, data):
+        """The one answer object (a table with one row is accepted too)."""
+        if isinstance(data, dict) and "about" in data:
+            return [data]
+        return super().rows_from_reply(data)[:1]
+
+    def attach_ids(self, out, batch):
+        """The answer gets the id of the abstract that was sent; a stray id from the model is overwritten."""
+        (row,) = batch
+        return [dict(o, unit_id=row["unit_id"]) for o in out[:1] if isinstance(o, dict)]
+
+    def assistant_json(self, rows):
+        """The answer object without the id, as the model gives it."""
+        (row,) = rows
+        return {k: v for k, v in row.items() if k != "unit_id"}
 
     def normalize(self, row):
         """Drops empty or missing quotes, so "" from strict structured output reads as no quote."""

@@ -86,8 +86,8 @@ def call(client, args, index, key, rows):
         record["error"] = f"stop_reason {resp.stop_reason}"
         return record, []
     try:
-        out = [rm.TASK.normalize(o) for o in json.loads(next(b.text for b in resp.content if b.type == "text"))["rows"]]
-    except (StopIteration, json.JSONDecodeError, KeyError) as e:
+        out = [rm.TASK.normalize(o) for o in rm.TASK.attach_ids(rm.parse_rows(next(b.text for b in resp.content if b.type == "text")), rows)]
+    except (StopIteration, ValueError) as e:
         record["error"] = f"unparseable output: {e}"[:300]
         return record, []
     wanted = {r["unit_id"] for r in rows}

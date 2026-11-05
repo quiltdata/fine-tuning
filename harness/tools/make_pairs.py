@@ -8,7 +8,7 @@ the model that served the call, and how many of its rows passed check_outputs.py
 The task, prompt and batch size come from the run's run.json, so batches are rebuilt exactly as
 the run made them; it stops if the prompt, examples or schema have changed since the run.
 
---mixed-batches SEED (abstract-facts) regroups the run's rows into batches of 1 to --max-batch
+--mixed-batches SEED (file-summary) regroups the run's rows into batches of 1 to --max-batch
 rows, sizes drawn with that seed, so the student learns any batch size. A regrouped batch's
 response is the teacher's rows for exactly those inputs.
 
@@ -83,6 +83,8 @@ def main():
     by_batch = {int(c["batch"]): c["model_served"] for c in calls}
     failed = set(re.findall(r"^FAIL  (\S+)", (run / "check.txt").read_text(), re.M))
 
+    if a.mixed_batches is not None and rm.TASK.name == "abstract-facts":
+        raise SystemExit("abstract-facts sends one abstract per call (35d): there are no batches to mix")
     if a.mixed_batches is not None:  # only rows that passed the check, so one failure doesn't discard a group
         groups = mixed([r for r in rows if r["unit_id"] in outputs and r["unit_id"] not in failed], a.mixed_batches, a.max_batch)
     else:  # exactly as the run batched them
@@ -101,7 +103,7 @@ def main():
                 "batch": key, "teacher_model": ",".join(t for t in teachers if t),
                 "rows": len(ids), "rows_passing_check": sum(u not in failed for u in ids),
                 "system": rm.SYSTEM, "user": rm.user_message(batch),
-                "assistant": json.dumps({"rows": [outputs[u] for u in ids]}, ensure_ascii=False),
+                "assistant": json.dumps(rm.TASK.assistant_json([outputs[u] for u in ids]), ensure_ascii=False),
             }, ensure_ascii=False) + "\n")
             written += 1
     print(f"{written} pairs written to {a.out}", file=sys.stderr)
