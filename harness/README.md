@@ -42,7 +42,7 @@ examples and schema.
 | Task | Input | Output | Batches |
 | --- | --- | --- | --- |
 | `file-summary` (default) | a file excerpt and mentions | `what`, `summary`, `about`, `entities`, `refers_to`, `evidence` | one article folder and file type |
-| `abstract-facts` | a paper's main abstract, at most 4,096 UTF-8 bytes, as plain text | one JSON object: one `about` fact and zero to two `findings`, each with an optional quote; length reported, not limited (cost counts verbosity) | one abstract per call; the harness attaches its id |
+| `abstract-facts` | papers' main abstracts, at most 4,096 UTF-8 bytes each, as numbered plain text | one JSON object of answers, each with its abstract's number: one `about` fact and zero to two `findings`, each with an optional quote; length reported, not limited (cost counts verbosity) | 5 abstracts per call (`--batch-size`); answers matched to abstracts by number |
 
 ### The abstract task
 
@@ -54,7 +54,7 @@ examples and schema.
 | Run a model | `tools/run_model.py --task abstract-facts` (Bedrock Converse, SageMaker or OpenAI-compatible) | `runs/<name>/…` |
 | Check validity (structure only; lengths reported, not judged) | `tools/check_outputs.py --task abstract-facts` | pass/fail per row; quotes as a note |
 | Score | `tools/score_abstracts.py` (twice: GPT-6.1 sol, then `--grader … --tag sonnet`) | `scores.csv`, `grades.jsonl`, `score.json` |
-| Teacher run to pairs (one per abstract) | `tools/make_pairs.py`, then `tools/make_sft.py` | `pairs.jsonl`, `train.jsonl` |
+| Teacher run to pairs (as the run batched them, or regrouped with `--mixed-batches SEED --max-batch 5`) | `tools/make_pairs.py`, then `tools/make_sft.py` | `pairs.jsonl`, `train.jsonl` |
 
 The input rules live in `tools/abstracts.py`: which abstract is the main one, how it is counted
 (UTF-8 bytes of the flattened text, section titles kept), truncation at 4,096 bytes on a whole
