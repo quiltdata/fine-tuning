@@ -2,11 +2,11 @@
 
   file-summary    the earlier summarizer: one row per file, batches of one article folder and file
                   type (prompts/summarizer.md, schemas/output.schema.json).
-  abstract-facts  the abstract task: five abstracts per call by default (35e), as plain numbered text;
+  abstract-facts  the abstract task: five abstracts per call by default, as plain numbered text;
                   the model returns one JSON object of answers, each with its abstract's number, one
                   `about` fact and zero to two `findings` in its own words, with an optional quote. The
                   harness matches answers to abstracts by number. Length is reported, not limited or
-                  retried (35c).
+                  retried.
 
 Where prompts live. The file-summary prompts are in harness/prompts/. The abstract task's
 student-facing prompt and examples are data, not code: they are published in the public data
@@ -238,7 +238,7 @@ class AbstractFacts(Task):
     batch_size = 5
 
     def batches(self, rows, per_file=False, size=None):
-        """Batches of `size` abstracts in input order (default 5, 35e; 1 with per_file); keys ("batch-<n>", "abstract")."""
+        """Batches of `size` abstracts in input order (default 5; 1 with per_file); keys ("batch-<n>", "abstract")."""
         n = 1 if per_file else (size or self.batch_size)
         return [((f"batch-{i // n}", "abstract"), rows[i:i + n]) for i in range(0, len(rows), n)]
 
@@ -325,7 +325,7 @@ class AbstractFacts(Task):
         return out
 
     def too_long(self, out):
-        """No length retries: a long answer already costs more (35c)."""
+        """No length retries: a long answer already costs more."""
         return []
 
 

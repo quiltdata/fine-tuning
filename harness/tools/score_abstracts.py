@@ -11,7 +11,7 @@ Per abstract, two grader calls, each seeing only what its question needs:
 
 And by code: validity (check_outputs.abstract_problems), fact lengths and the quote side metric.
 Every row that parses is graded, valid or not; only a missing or unparseable row scores as
-conveying nothing. Length is reported, not judged: cost per abstract already counts verbosity (35c).
+conveying nothing. Length is reported, not judged: cost per abstract already counts verbosity.
 
 Measures, for all rows and split by the protocol flag:
 

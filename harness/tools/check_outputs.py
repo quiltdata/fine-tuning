@@ -73,7 +73,7 @@ def parse_abstract_row(row):
 
 def abstract_problems(out):
     """Validity of one parsed abstract-task row, by code: the schema (one about fact, at most two
-    findings). Lengths are not judged: cost per abstract already counts verbosity (35c)."""
+    findings). Lengths are not judged: cost per abstract already counts verbosity."""
     try:
         jsonschema.validate(out, ABSTRACT_SCHEMA)
         return []

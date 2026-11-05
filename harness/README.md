@@ -81,8 +81,8 @@ here: they are part of the evaluation and never reach the student.
 **Baselines on Claude** run through `run_model.py`'s Bedrock Converse backend
 (`--model us.anthropic.claude-haiku-5-5`, `us.anthropic.claude-opus-5-5`), both the same way: Haiku 5.5
 isn't served on the Anthropic-SDK Bedrock endpoint `run_claude.py` uses (it returns 404). Converse
-has no refusal fallback, so every row is the model's own. If `run_claude.py` is used (Opus only),
-pass `--no-fallback`.
+has no refusal fallback, so every row is the model's own. `run_claude.py` is for the file-summary task
+only; it refuses this one.
 
 ### Tests
 
