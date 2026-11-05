@@ -12,10 +12,12 @@ import run_model as rm
 import score_abstracts
 
 
-def test_long_optional_quote_does_not_invalidate_a_row():
+def test_length_never_invalidates_a_row():  # 35c: cost counts verbosity, validity doesn't
     row = {"unit_id": "A.1", "about": {"fact": "A trial.", "quote": "q" * 250}, "findings": []}
     assert check_outputs.abstract_problems(row) == []
-    assert check_outputs.abstract_problems({**row, "about": {"fact": "f" * 251}})  # the fact cap still holds
+    assert check_outputs.abstract_problems({**row, "about": {"fact": "f" * 600}}) == []
+    three = {**row, "findings": [{"fact": "a"}, {"fact": "b"}, {"fact": "c"}]}
+    assert check_outputs.abstract_problems(three)  # structure still counts
 
 
 def test_verdicts_are_case_insensitive_and_dropped_keys_are_not_no_results(monkeypatch):

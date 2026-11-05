@@ -3,8 +3,8 @@
   file-summary    the earlier summarizer: one row per file, batches of one article folder and file
                   type (prompts/summarizer.md, schemas/output.schema.json).
   abstract-facts  the abstract task: per abstract, one `about` fact and zero to two `findings`, each
-                  in the model's own words, at most 250 characters, with an optional quote (at most
-                  200). The model sees only unit_id and abstract; batches of ten in input order.
+                  in the model's own words, with an optional quote. Length is reported, not limited
+                  or retried (35c). The model sees only unit_id and abstract; batches of ten in input order.
 
 Where prompts live. The file-summary prompts are in harness/prompts/. The abstract task's
 student-facing prompt and examples are data, not code: they are published in the public data
@@ -30,7 +30,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DATA_ENV = "FINE_TUNING_DATA"
 UNSUPPORTED = {"$schema", "$id", "title", "description", "minLength", "maxLength", "minItems", "maxItems", "pattern"}
-FACT_CHARS = 250
 QUOTE_CHARS = 200
 
 
@@ -211,8 +210,7 @@ class AbstractFacts(Task):
     requires_examples = True
     batch_size = 10
     required_note = ("Required content: each output row must convey these facts about its abstract, the about fact and the "
-                     "findings, stated in your own words. Each fact stays one claim of at most 250 characters, enforced by "
-                     "code; quotes stay optional, verbatim and at most 200 characters.")
+                     "findings, stated in your own words. Each fact stays one claim; quotes stay optional and verbatim.")
 
     def batches(self, rows, per_file=False, size=None):
         """Fixed-size batches in input order (one row each with per_file); keys are ("batch-<n>", "abstract")."""
@@ -250,19 +248,8 @@ class AbstractFacts(Task):
         return out
 
     def too_long(self, out):
-        problems = []
-        for o in out:
-            if not isinstance(o, dict):
-                continue
-            facts = [("about", o.get("about"))] + [(f"finding {i + 1}", f) for i, f in enumerate(o.get("findings") or [])]
-            for label, f in facts:
-                if not isinstance(f, dict):
-                    continue
-                if len(f.get("fact") or "") > FACT_CHARS:
-                    problems.append(f'{o.get("unit_id")}: {label} is {len(f["fact"])} characters, the limit is {FACT_CHARS}')
-                if len(f.get("quote") or "") > QUOTE_CHARS:
-                    problems.append(f'{o.get("unit_id")}: the {label} quote is {len(f["quote"])} characters, the limit is {QUOTE_CHARS}')
-        return problems
+        """No length retries: a long answer already costs more (35c)."""
+        return []
 
 
 TASKS = {t.name: t for t in (FileSummary, AbstractFacts)}

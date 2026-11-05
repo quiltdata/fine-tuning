@@ -51,7 +51,8 @@ def write_set(tmp_path):
 def fake_grader(model, region, system, messages, name, schema, max_tokens=4000):
     text = messages[0]["content"][0]["text"]
     if system == score_abstracts.RECALL_SYSTEM:
-        conveyed = {"An RCT": {"about": True, "f1": True, "f2": False}, "A trial protocol": {"about": True}}
+        conveyed = {"An RCT": {"about": True, "f1": True, "f2": False}, "A trial protocol": {"about": True},
+                    "A survey": {"about": False, "f1": True}}
         for marker, v in conveyed.items():
             if marker in text:
                 return {"verdicts": [{"id": k, "conveyed": c} for k, c in v.items()]}, {"cost_usd": 0.001, "error": ""}
@@ -73,9 +74,10 @@ def test_score_abstracts_measures(tmp_path, monkeypatch, capsys):
     score_abstracts.main()
     summary = json.loads((rd / "score.json").read_text())
     a = summary["all"]
-    assert a["rows"] == 4 and a["valid"] == 2 and a["validity"] == 50.0
-    assert a["about_recall"] == 50.0            # A and P conveyed; M missing, I invalid
-    assert a["findings_recall"] == 25.0         # 1 of 4 key findings (A: 1 of 2, M: 0 of 1, I: 0 of 1; P has none)
+    assert a["rows"] == 4 and a["valid"] == 3 and a["validity"] == 75.0   # a 300-character fact is still valid (35c)
+    assert a["about_recall"] == 50.0            # A and P conveyed; M missing; I graded, not conveyed
+    assert a["findings_recall"] == 50.0         # 2 of 4 key findings (A: 1 of 2, M: 0 of 1, I: 1 of 1; P has none)
+    assert a["max_fact_chars"] == 300
     assert a["facts_stated"] == 7 and a["faithfulness"] == round(100 * 5 / 7, 1)
     assert a["overstated"] == round(100 / 7, 1) and a["unsupported"] == round(100 / 7, 1)
     assert a["invented_findings"] == 1 and a["rows_key_without_findings"] == 1
@@ -83,8 +85,8 @@ def test_score_abstracts_measures(tmp_path, monkeypatch, capsys):
     assert a["quotes_found"] == 50.0 and a["usd_per_100_rows"] == 1.0
     assert summary["protocol"]["rows"] == 1 and summary["not_protocol"]["rows"] == 3
     rows = {r["unit_id"]: r for r in csv.DictReader(open(rd / "scores.csv", newline=""))}
-    assert rows["M.1"]["problems"] == "no output row" and rows["I.1"]["valid"] == "0" and rows["A.1"]["missed"] == "f2"
-    assert summary["grader_calls"] == 5        # recall for A and P; faithfulness for A, P and I
+    assert rows["M.1"]["problems"] == "no output row" and rows["I.1"]["valid"] == "1" and rows["A.1"]["missed"] == "f2"
+    assert summary["grader_calls"] == 6        # recall and faithfulness for A, P and I; none for the missing M
 
 
 def test_reuse_grades_makes_no_calls(tmp_path, monkeypatch):
@@ -109,5 +111,6 @@ def test_check_outputs_abstract(tmp_path, capsys):
         check_outputs.main_abstract(str(sd / "inputs.csv"), str(rd / "outputs.csv"))
     out = capsys.readouterr().out
     assert e.value.code == 1
-    assert "PASS  A.1" in out and "PASS  P.1" in out and "FAIL  I.1" in out and "FAIL  M.1" in out
-    assert "quote not found (not scored)" in out and "2/4 input rows pass" in out and "1/2 quotes found" in out
+    assert "PASS  A.1" in out and "PASS  P.1" in out and "PASS  I.1" in out and "FAIL  M.1" in out
+    assert "quote not found (not scored)" in out and "3/4 input rows pass" in out and "1/2 quotes found" in out
+    assert "longest fact: 300 characters" in out

@@ -89,8 +89,7 @@ def test_abstract_normalize_and_limits(tmp_path):
     row = {"unit_id": "PMC1.1", "about": {"fact": "A trial.", "quote": ""}, "findings": [{"fact": "X fell.", "quote": "x fell"}]}
     assert task.normalize(row) == {"unit_id": "PMC1.1", "about": {"fact": "A trial."}, "findings": [{"fact": "X fell.", "quote": "x fell"}]}
     long = {"unit_id": "PMC1.1", "about": {"fact": "a" * 251}, "findings": [{"fact": "ok", "quote": "q" * 201}]}
-    problems = task.too_long([long])
-    assert len(problems) == 2 and "251 characters" in problems[0] and "201 characters" in problems[1]
+    assert task.too_long([long]) == []  # 35c: no length retries
 
 
 def test_run_model_call_offline(tmp_path):

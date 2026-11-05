@@ -42,7 +42,7 @@ examples and schema.
 | Task | Input | Output | Batches |
 | --- | --- | --- | --- |
 | `file-summary` (default) | a file excerpt and mentions | `what`, `summary`, `about`, `entities`, `refers_to`, `evidence` | one article folder and file type |
-| `abstract-facts` | a paper's main abstract, at most 4,096 UTF-8 bytes | one `about` fact and zero to two `findings`, each at most 250 characters with an optional quote | 10 abstracts (`--batch-size`) |
+| `abstract-facts` | a paper's main abstract, at most 4,096 UTF-8 bytes | one `about` fact and zero to two `findings`, each with an optional quote; length reported, not limited (cost counts verbosity) | 10 abstracts (`--batch-size`) |
 
 ### The abstract task
 
@@ -52,7 +52,7 @@ examples and schema.
 | Build inputs: main abstract, size, truncation, publication types, protocol flag | `tools/make_abstracts.py` | `inputs.csv`, `skipped.csv` |
 | Write the typed key (about, findings) | `tools/make_facts.py --task abstract-facts --split-label test` | `reference/facts.jsonl` |
 | Run a model | `tools/run_model.py --task abstract-facts` (Bedrock Converse, SageMaker or OpenAI-compatible) | `runs/<name>/…` |
-| Check validity | `tools/check_outputs.py --task abstract-facts` | pass/fail per row; quotes as a note |
+| Check validity (structure only; lengths reported, not judged) | `tools/check_outputs.py --task abstract-facts` | pass/fail per row; quotes as a note |
 | Score | `tools/score_abstracts.py` (twice: GPT-6.1 sol, then `--grader … --tag sonnet`) | `scores.csv`, `grades.jsonl`, `score.json` |
 | Teacher run to pairs, any batch size | `tools/make_pairs.py --mixed-batches SEED`, then `tools/make_sft.py` | `pairs.jsonl`, `train.jsonl` |
 

@@ -9,9 +9,9 @@ Per abstract, two grader calls, each seeing only what its question needs:
                 is each of the model's facts supported, overstated or unsupported, and are its two
                 findings redundant?
 
-And by code: validity (check_outputs.abstract_problems) and the quote side metric. A missing,
-unparseable or invalid row scores as conveying nothing; an invalid row's facts are still graded
-for faithfulness when they parse.
+And by code: validity (check_outputs.abstract_problems), fact lengths and the quote side metric.
+Every row that parses is graded, valid or not; only a missing or unparseable row scores as
+conveying nothing. Length is reported, not judged: cost per abstract already counts verbosity (35c).
 
 Measures, for all rows and split by the protocol flag:
 
@@ -21,7 +21,8 @@ Measures, for all rows and split by the protocol flag:
   redundancy         rows with redundant findings / rows with two findings
   invented_findings  rows whose key has no findings, with none dropped by the key's quote check (so
                      the abstract reports none), but whose output states one
-  validity           rows passing the code check / rows
+  validity           rows passing the code check (structure only) / rows
+  fact_chars         mean and longest fact, in characters
   quotes_found       side metric, not scored
   usd_per_100_rows   the run's spend, each call's cost shared by its rows (calls.csv unit_ids)
 
@@ -56,7 +57,7 @@ FAITH_SCHEMA = {"type": "object", "required": ["verdicts", "redundant"], "proper
                                             "properties": {"id": {"type": "string"}, "verdict": {"enum": VERDICTS}}}},
     "redundant": {"type": "boolean"}}}
 COLUMNS = ["unit_id", "protocol", "valid", "problems", "key_about", "about_conveyed", "key_findings", "key_dropped", "findings_conveyed",
-           "stated", "out_findings", "supported", "overstated", "unsupported", "two_findings", "redundant",
+           "stated", "out_findings", "fact_chars", "fact_chars_max", "supported", "overstated", "unsupported", "two_findings", "redundant",
            "quotes_given", "quotes_found", "cost_usd", "missed", "error"]
 
 
@@ -129,7 +130,7 @@ def score_row(key, inp, raw, cost_share, args):
         recall, faith, redundant = previous["recall"], previous["faithfulness"], previous["redundant"]
         recs, reused = previous["calls"], True
     else:
-        recall, r1 = grade_recall(key["key_facts"], facts if valid else [], args)
+        recall, r1 = grade_recall(key["key_facts"], facts, args)
         faith, redundant, r2 = grade_faithfulness(inp["abstract"], facts, args)
         recs = [r for r in (r1, r2) if r]
         if recall is None or faith is None:
@@ -143,6 +144,7 @@ def score_row(key, inp, raw, cost_share, args):
         about_conveyed=int(bool(recall.get("about"))),
         findings_conveyed=sum(bool(v) for k, v in recall.items() if k != "about"),
         stated=len(facts), out_findings=out_findings,
+        fact_chars=sum(len(t) for _, t in facts), fact_chars_max=max([len(t) for _, t in facts] or [0]),
         **{v: sum(1 for x in faith.values() if x == v) for v in VERDICTS},
         two_findings=int(out_findings == 2), redundant=int(out_findings == 2 and redundant),
         quotes_given=len(given), quotes_found=len(given) - len(missing),
@@ -166,6 +168,8 @@ def totals(rows):
         "about_recall": ratio(s("about_conveyed"), s("key_about")),
         "findings_recall": ratio(s("findings_conveyed"), s("key_findings")),
         "facts_stated": s("stated"), "faithfulness": ratio(s("supported"), s("stated")),
+        "mean_fact_chars": round(s("fact_chars") / s("stated"), 1) if s("stated") else None,
+        "max_fact_chars": max(r["fact_chars_max"] for r in rows),
         "overstated": ratio(s("overstated"), s("stated")), "unsupported": ratio(s("unsupported"), s("stated")),
         "rows_with_two_findings": s("two_findings"), "redundancy": ratio(s("redundant"), s("two_findings")),
         "invented_findings": sum(1 for r in rows if r["key_findings"] == 0 and not r["key_dropped"] and r["out_findings"] > 0),
