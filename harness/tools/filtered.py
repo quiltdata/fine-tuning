@@ -23,7 +23,8 @@ def blocked(run_dir):
     out = []
     for c in csv.DictReader(open(Path(run_dir) / "calls.csv", newline="")):
         ids = json.loads(c["unit_ids"]) if c.get("unit_ids") else []
-        if len(ids) == 1 and int(c.get("filtered") or 0) > 0:
+        stopped = c.get("stop_reason") in ("content_filtered", "content_filter")  # runs made before the filtered column
+        if len(ids) == 1 and (int(c.get("filtered") or 0) > 0 or stopped):
             out.append(ids[0])
     return out
 
