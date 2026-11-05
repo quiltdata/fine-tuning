@@ -145,6 +145,18 @@
    "region": "us-east-2",
    "source": "price list (AmazonSageMaker USE2-Host:ml.g6e.2xlarge); temporary endpoint for the abstract-task baseline of the v5 NVFP4 export, max_num_seqs 64"
   },
+  "abstract-lightning-base-nvfp4-xl": {
+   "instance": "ml.g6e.xlarge",
+   "usd_per_hour": 2.6054,
+   "region": "us-east-2",
+   "source": "price list (AmazonSageMaker USE2-Host:ml.g6e.xlarge); the same baseline when 2xlarge had no capacity"
+  },
+  "abstract-lightning-v5-nvfp4-xl": {
+   "instance": "ml.g6e.xlarge",
+   "usd_per_hour": 2.6054,
+   "region": "us-east-2",
+   "source": "price list (AmazonSageMaker USE2-Host:ml.g6e.xlarge); the same baseline when 2xlarge had no capacity"
+  },
   "ingest-lightning-ft-v5-nvfp4": {
    "instance": "ml.g6e.2xlarge",
    "usd_per_hour": 2.8026,
