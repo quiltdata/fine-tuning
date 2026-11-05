@@ -53,6 +53,7 @@ examples and schema.
 | Write the typed key (about, findings) | `tools/make_facts.py --task abstract-facts --split-label test` | `reference/facts.jsonl` |
 | Run a model | `tools/run_model.py --task abstract-facts` (Bedrock Converse, SageMaker or OpenAI-compatible) | `runs/<name>/…` |
 | Check validity (structure only; lengths reported, not judged) | `tools/check_outputs.py --task abstract-facts` | pass/fail per row; quotes as a note |
+| Exclude papers a baseline's content filter blocks (run that model first) | `tools/filtered.py set_dir run_dir` | `excluded.csv`, dropped for every model when scoring |
 | Score | `tools/score_abstracts.py` (twice: GPT-6.1 sol, then `--grader … --tag sonnet`) | `scores.csv`, `grades.jsonl`, `score.json` |
 | Teacher run to pairs (as the run batched them, or regrouped with `--mixed-batches SEED --max-batch 5`) | `tools/make_pairs.py`, then `tools/make_sft.py` | `pairs.jsonl`, `train.jsonl` |
 

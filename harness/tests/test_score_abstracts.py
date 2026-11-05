@@ -114,3 +114,35 @@ def test_check_outputs_abstract(tmp_path, capsys):
     assert "PASS  A.1" in out and "PASS  P.1" in out and "PASS  I.1" in out and "FAIL  M.1" in out
     assert "quote not found (not scored)" in out and "3/4 input rows pass" in out and "1/2 quotes found" in out
     assert "longest fact: 300 characters" in out
+
+
+def test_excluded_papers_are_left_out_for_every_model(tmp_path, monkeypatch):
+    sd, rd = write_set(tmp_path)
+    (sd / "excluded.csv").write_text("unit_id,reason,run\nI.1,content filter blocked it on m,r\n")
+    monkeypatch.setattr(score_abstracts, "call_tool", fake_grader)
+    monkeypatch.setattr(sys, "argv", ["score_abstracts.py", str(sd), str(rd)])
+    score_abstracts.main()
+    s = json.loads((rd / "score.json").read_text())
+    assert s["excluded"] == 1 and s["all"]["rows"] == 3
+    assert "I.1" not in {r["unit_id"] for r in csv.DictReader(open(rd / "scores.csv"))}
+    monkeypatch.setattr(sys, "argv", ["score_abstracts.py", str(sd), str(rd), "--no-exclude", "--reuse-grades"])
+    score_abstracts.main()
+    assert json.loads((rd / "score.json").read_text())["all"]["rows"] == 4
+
+
+def test_filtered_tool_lists_papers_blocked_alone(tmp_path):
+    import filtered
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "run.json").write_text(json.dumps({"model": "us.anthropic.claude-opus-5-5"}))
+    with open(run / "calls.csv", "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=["unit_ids", "filtered"])
+        w.writeheader()
+        w.writerow({"unit_ids": json.dumps(["A.1", "B.1", "C.1"]), "filtered": "2"})  # blocked batch: not itself a verdict
+        w.writerow({"unit_ids": json.dumps(["A.1"]), "filtered": ""})                  # passed alone: kept
+        w.writerow({"unit_ids": json.dumps(["B.1"]), "filtered": "2"})                 # blocked alone: excluded
+        w.writerow({"unit_ids": json.dumps(["C.1"]), "filtered": "1"})                 # blocked once, then passed: excluded
+    filtered.main(str(tmp_path), str(run))
+    filtered.main(str(tmp_path), str(run))  # idempotent
+    rows = list(csv.DictReader(open(tmp_path / "excluded.csv", newline="")))
+    assert [r["unit_id"] for r in rows] == ["B.1", "C.1"] and "claude-opus-5-5" in rows[0]["reason"]

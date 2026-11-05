@@ -26,6 +26,10 @@ Measures, for all rows and split by the protocol flag:
   quotes_found       side metric, not scored
   usd_per_100_rows   the run's spend, each call's cost shared by its rows (calls.csv unit_ids)
 
+Papers listed in the set's excluded.csv (filtered.py: abstracts a baseline model's content filter
+blocks) are left out for every model, so all are compared on the same papers; score.json reports
+how many. --no-exclude scores them too.
+
 Writes to run_dir (suffix added when --tag is given, for a second grader):
   scores.csv    one line per abstract
   grades.jsonl  both graders' verdicts per abstract, with their call records
@@ -190,12 +194,16 @@ def main():
     ap.add_argument("--tag", default="", help="suffix for the output files, e.g. sonnet for a second grader")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--reuse-grades", action="store_true", help="take verdicts from an earlier grades file instead of calling the grader")
+    ap.add_argument("--no-exclude", action="store_true", help="score the set's excluded papers too (excluded.csv)")
     args = ap.parse_args()
 
     csv.field_size_limit(sys.maxsize)
     sd, rd = Path(args.set_dir), Path(args.run_dir)
     inputs = {r["unit_id"]: r for r in csv.DictReader(open(sd / "inputs.csv", newline=""))}
-    keys = [json.loads(l) for l in open(sd / "reference" / "facts.jsonl")][: args.limit]
+    excluded_file = sd / "excluded.csv"
+    excluded = set() if args.no_exclude or not excluded_file.exists() else \
+        {r["unit_id"] for r in csv.DictReader(open(excluded_file, newline=""))}
+    keys = [k for k in map(json.loads, open(sd / "reference" / "facts.jsonl")) if k["unit_id"] not in excluded][: args.limit]
     outputs = {r["unit_id"]: r for r in csv.DictReader(open(rd / "outputs.csv", newline=""))}
     share = {}
     for c in csv.DictReader(open(rd / "calls.csv", newline="")):
@@ -225,6 +233,7 @@ def main():
         "scored": started.isoformat(timespec="seconds"), "run_dir": rd.name, "model": run.get("model"),
         "task": run.get("task"), "prompt_sha256": run.get("prompt_sha256"), "examples_sha256": run.get("examples_sha256"),
         "grader": args.grader, "grader_rate": RATES[args.grader], "answer_key": "reference/facts.jsonl",
+        "excluded": len(excluded & {json.loads(l)["unit_id"] for l in open(sd / "reference" / "facts.jsonl")}),
         "all": totals(rows), "not_protocol": totals([r for r in rows if not r["protocol"]]),
         "protocol": totals([r for r in rows if r["protocol"]]),
         "grader_calls": len(calls), "grader_errors": sum(1 for c in calls if c.get("error")),
