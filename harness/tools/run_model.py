@@ -215,7 +215,7 @@ class BedrockChat:
     def call(self, rows, extra=""):
         body = {"model": self.args.model, "max_tokens": self.args.max_tokens,
                 "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user_message(rows, REQUIRED_FACTS) + extra}],
-                "response_format": {"type": "json_schema", "json_schema": {"name": "rows", "schema": API_SCHEMA, "strict": True}},
+                "response_format": {"type": "json_schema", "json_schema": {"name": "rows", "schema": tasks.strip(API_SCHEMA), "strict": True}},
                 "service_tier": self.args.service_tier}
         if self.args.reasoning_effort:
             body["reasoning_effort"] = self.args.reasoning_effort

@@ -254,10 +254,12 @@ class AbstractFacts(Task):
 
     def api_schema(self):
         """Written out rather than derived: strict structured output (Bedrock Chat Completions) rejects
-        optional properties and $ref, so `quote` is always present and "" means no quote."""
+        optional properties and $ref, so `quote` is always present and "" means no quote. At most two
+        findings is stated here too, for the servers that take it (Converse tools, vLLM guided decoding);
+        run_model.py strips it where strict mode rejects it."""
         fact = {"type": "object", "properties": {"fact": {"type": "string"}, "quote": {"type": "string"}},
                 "required": ["fact", "quote"], "additionalProperties": False}
-        return {"type": "object", "properties": {"about": fact, "findings": {"type": "array", "items": fact}},
+        return {"type": "object", "properties": {"about": fact, "findings": {"type": "array", "items": fact, "maxItems": 2}},
                 "required": ["about", "findings"], "additionalProperties": False}
 
     def rows_from_reply(self, data):
