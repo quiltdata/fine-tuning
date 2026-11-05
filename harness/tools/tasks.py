@@ -2,11 +2,10 @@
 
   file-summary    the earlier summarizer: one row per file, batches of one article folder and file
                   type (prompts/summarizer.md, schemas/output.schema.json).
-  abstract-facts  the abstract task: five abstracts per call by default, as plain numbered text;
-                  the model returns one JSON object of answers, each with its abstract's number, one
-                  `about` fact and zero to two `findings` in its own words, with an optional quote. The
-                  harness matches answers to abstracts by number. Length is reported, not limited or
-                  retried.
+  abstract-facts  the abstract task: one abstract per call, as plain text, with the instructions
+                  cached; the model returns one JSON object with one `about` fact and zero to two
+                  `findings` in its own words, each with an optional quote. Length is reported, not
+                  limited or retried.
 
 Where prompts live. The file-summary prompts are in harness/prompts/. The abstract task's
 student-facing prompt and examples are data, not code: they are published in the public data
@@ -231,40 +230,38 @@ class AbstractFacts(Task):
     list_columns = ("about", "findings")
     out_columns = ("unit_id", "about", "findings")
     requires_examples = True
-    required_note = ("Required content: each answer must convey these facts about its abstract, the about fact and the "
+    required_note = ("Required content: the answer must convey these facts about the abstract, the about fact and the "
                      "findings, stated in your own words. Each fact stays one claim; quotes stay optional and verbatim.")
-    text_instruction = ('\n\nReply with only a JSON object of the form {"answers": [{"abstract": 1, "about": {...}, '
-                        '"findings": [...]}, ...]}, one answer per abstract, and nothing else.')
-    batch_size = 5
+    text_instruction = ('\n\nReply with only a JSON object of the form {"about": {...}, "findings": [...]} '
+                        'and nothing else.')
+    batch_size = 1
 
     def batches(self, rows, per_file=False, size=None):
-        """Batches of `size` abstracts in input order (default 5; 1 with per_file); keys ("batch-<n>", "abstract")."""
-        n = 1 if per_file else (size or self.batch_size)
-        return [((f"batch-{i // n}", "abstract"), rows[i:i + n]) for i in range(0, len(rows), n)]
+        """One abstract per call, always: the instructions are the same every time and are cached,
+        so batching saves nothing and only adds a numbering task. Keys ("abstract-<n>", "abstract")."""
+        if size not in (None, 1):
+            raise ValueError("abstract-facts takes one abstract per call; --batch-size must be 1")
+        return [((f"abstract-{i}", "abstract"), [r]) for i, r in enumerate(rows)]
 
     def user_message(self, rows, required=None):
-        """The abstracts as plain text, numbered from 1: no ids, no JSON. A teacher run adds, by number,
-        the facts each answer must convey; make_pairs.py never passes them, so the student never sees them."""
-        msg = "\n\n".join(f"Abstract {i}:\n{r['abstract']}" for i, r in enumerate(rows, 1))
-        facts = {str(i): required[r["unit_id"]] for i, r in enumerate(rows, 1) if required and required.get(r["unit_id"])}
-        if facts:
-            msg += "\n\n" + self.required_note + "\n" + json.dumps(facts, ensure_ascii=False)
+        """The abstract as plain text: no id, no number, no JSON. A teacher run adds the facts the answer
+        must convey; make_pairs.py never passes them, so the student never sees them."""
+        (r,) = rows
+        msg = r["abstract"]
+        if required and required.get(r["unit_id"]):
+            msg += "\n\n" + self.required_note + "\n" + json.dumps(required[r["unit_id"]], ensure_ascii=False)
         return msg
 
     def api_schema(self):
         """Written out rather than derived: strict structured output (Bedrock Chat Completions) rejects
-        optional properties and $ref, so `quote` is always present and "" means no quote. Answers carry
-        the abstract's number, not an id: the harness knows which abstract each number is."""
+        optional properties and $ref, so `quote` is always present and "" means no quote."""
         fact = {"type": "object", "properties": {"fact": {"type": "string"}, "quote": {"type": "string"}},
                 "required": ["fact", "quote"], "additionalProperties": False}
-        answer = {"type": "object", "properties": {"abstract": {"type": "integer"}, "about": fact,
-                                                   "findings": {"type": "array", "items": fact}},
-                  "required": ["abstract", "about", "findings"], "additionalProperties": False}
-        return {"type": "object", "properties": {"answers": {"type": "array", "items": answer}},
-                "required": ["answers"], "additionalProperties": False}
+        return {"type": "object", "properties": {"about": fact, "findings": {"type": "array", "items": fact}},
+                "required": ["about", "findings"], "additionalProperties": False}
 
     def rows_from_reply(self, data):
-        """The answers: {"answers": [...]}, a bare list, or one answer object (one abstract)."""
+        """The one answer: an answer object, or one wrapped in a list or {"answers": [...]}."""
         if isinstance(data, dict) and "answers" in data:
             data = data["answers"]
             if isinstance(data, str):
@@ -273,28 +270,20 @@ class AbstractFacts(Task):
             return [data]
         if isinstance(data, list):
             return data
-        raise ValueError("no answers in reply")
+        raise ValueError("no answer in reply")
 
     def attach_ids(self, out, batch):
-        """Each answer gets the id of the abstract its number names. If any number is missing, not a whole
-        number, outside 1..len(batch) or repeated, the reply is rejected (call() retries it): an
-        off-by-one numbering would otherwise attach answers to the wrong abstracts. With one abstract,
-        an unnumbered answer is taken as its answer. An abstract left without an answer is a missing row."""
+        """The answer gets the abstract's id. More than one answer for one abstract is rejected (call()
+        retries it) rather than guessing which to keep."""
         answers = [o for o in out if isinstance(o, dict)]
-        numbers = []
-        for o in answers:
-            n = o.get("abstract", 1 if len(batch) == 1 else None)
-            if isinstance(n, bool) or not (isinstance(n, int) or (isinstance(n, str) and n.strip().isdigit())):
-                raise ValueError(f"answer numbered {n!r}; expected 1 to {len(batch)}")
-            numbers.append(int(n))
-        if any(not 1 <= n <= len(batch) for n in numbers) or len(set(numbers)) != len(numbers):
-            raise ValueError(f"answers numbered {numbers} for {len(batch)} abstracts")
-        return [{**{k: v for k, v in o.items() if k != "abstract"}, "unit_id": batch[n - 1]["unit_id"]}
-                for o, n in zip(answers, numbers)]
+        if len(answers) != 1:
+            raise ValueError(f"{len(answers)} answers for one abstract")
+        return [{**{k: v for k, v in answers[0].items() if k != "abstract"}, "unit_id": batch[0]["unit_id"]}]
 
     def assistant_json(self, rows):
-        """The answers numbered in batch order, without ids, as the model gives them."""
-        return {"answers": [{"abstract": i, **{k: v for k, v in r.items() if k != "unit_id"}} for i, r in enumerate(rows, 1)]}
+        """The answer as the model gives it, without the id."""
+        (r,) = rows
+        return {k: v for k, v in r.items() if k != "unit_id"}
 
     def normalize(self, row):
         """Drops empty or missing quotes, so "" from strict structured output reads as no quote, and

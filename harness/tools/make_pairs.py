@@ -83,6 +83,8 @@ def main():
     by_batch = {int(c["batch"]): c["model_served"] for c in calls}
     failed = set(re.findall(r"^FAIL  (\S+)", (run / "check.txt").read_text(), re.M))
 
+    if a.mixed_batches is not None and getattr(rm.TASK, "batch_size", None) == 1:
+        sys.exit(f"{rm.TASK.name} is one abstract per call; --mixed-batches doesn't apply")
     if a.mixed_batches is not None:  # only rows that passed the check, so one failure doesn't discard a group
         groups = mixed([r for r in rows if r["unit_id"] in outputs and r["unit_id"] not in failed], a.mixed_batches, a.max_batch)
     else:  # exactly as the run batched them

@@ -109,34 +109,29 @@ def test_string_encoded_facts_are_decoded(tmp_path):
     assert task.normalize(broken)["about"] == '{"fact": "cut off'  # left as is, so the check fails it
 
 
-def test_filtered_batch_is_split_so_only_the_flagged_abstract_is_lost(tmp_path):
+def test_filtered_abstract_is_lost_alone(tmp_path):
     from concurrent.futures import ThreadPoolExecutor
     from test_tasks import abstract_data
     rm.set_task("abstract-facts", data=abstract_data(tmp_path), allow_no_examples=True)
     rows = [{"unit_id": u, "abstract": f"text {u}"} for u in ("A.1", "BAD.1", "C.1")]
 
-    class Filter:  # blocks any call that includes the BAD abstract, answers the rest
+    class Filter:  # blocks the BAD abstract, answers the rest
         def call(self, batch, extra=""):
             rec = {"model_served": "m", "input_tokens": 100, "output_tokens": 0 if any("BAD" in r["unit_id"] for r in batch) else 50}
             if any("BAD" in r["unit_id"] for r in batch):
                 return [], {**rec, "stop_reason": "content_filtered"}
-            answers = [{"abstract": i, "about": {"fact": "ok"}, "findings": []} for i in range(1, len(batch) + 1)]
-            return answers, {**rec, "stop_reason": "tool_use"}
+            return [{"about": {"fact": "ok"}, "findings": []}], {**rec, "stop_reason": "tool_use"}
 
     args = SimpleNamespace(model="m")
-    work = rm.batches(rows, size=3)
+    work = rm.batches(rows)
     first = [rm.call(Filter(), args, i, *w) for i, w in enumerate(work)]
-    assert first[0][1] == [] and first[0][0]["filtered"] == 2  # blocked, retried once, blocked again
+    assert sorted(o["unit_id"] for _, outs in first for o in outs) == ["A.1", "C.1"]
+    assert first[1][1] == [] and first[1][0]["filtered"] == 2  # blocked, retried once, blocked again
     with ThreadPoolExecutor(2) as pool:
-        extra = rm.split_filtered(Filter(), args, first, work, pool)
-    got = sorted(o["unit_id"] for _, outs in extra for o in outs)
-    assert got == ["A.1", "C.1"] and all(rec["split_from"] == 0 for rec, _ in extra)
-    lost = [rec for rec, outs in extra if not outs]
-    assert len(lost) == 1 and lost[0]["filtered"] == 2 and json.loads(lost[0]["unit_ids"]) == ["BAD.1"]
+        assert rm.split_filtered(Filter(), args, first, work, pool) == []  # nothing to split: one abstract per call
     rm.set_task("file-summary")
 
-
-def test_make_pairs_keeps_the_answered_abstracts_of_a_batch(tmp_path, monkeypatch):
+def test_make_pairs_one_pair_per_answered_abstract(tmp_path, monkeypatch):
     from test_tasks import abstract_data
     data = abstract_data(tmp_path / "data", examples=True)
     import tasks
@@ -157,17 +152,20 @@ def test_make_pairs_keeps_the_answered_abstracts_of_a_batch(tmp_path, monkeypatc
     with open(run / "calls.csv", "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=["batch", "unit_ids", "model_served"])
         w.writeheader()
-        w.writerow({"batch": 0, "unit_ids": json.dumps([r["unit_id"] for r in rows]), "model_served": "teacher"})
+        for i, r in enumerate(rows):
+            w.writerow({"batch": i, "unit_ids": json.dumps([r["unit_id"]]), "model_served": "teacher"})
     (run / "check.txt").write_text("")
     (run / "run.json").write_text(json.dumps({**fp, "task": "abstract-facts"}))
     monkeypatch.setattr(rm, "set_task", functools.partial(rm.set_task, data=data))
     monkeypatch.setattr(sys, "argv", ["make_pairs.py", str(inputs), str(run), str(tmp_path / "p.jsonl")])
     make_pairs.main()
-    (pair,) = [json.loads(l) for l in open(tmp_path / "p.jsonl")]
-    assert pair["rows"] == 4 and "text 2" not in pair["user"] and pair["user"].count("Abstract ") == 4
-    assert [a["abstract"] for a in json.loads(pair["assistant"])["answers"]] == [1, 2, 3, 4]
+    pairs = [json.loads(l) for l in open(tmp_path / "p.jsonl")]
+    assert [p["user"] for p in pairs] == ["text 0", "text 1", "text 3", "text 4"]
+    assert all(json.loads(p["assistant"]) == {"about": {"fact": "f"}, "findings": []} for p in pairs)
+    monkeypatch.setattr(sys, "argv", ["make_pairs.py", str(inputs), str(run), str(tmp_path / "m.jsonl"), "--mixed-batches", "1"])
+    with pytest.raises(SystemExit, match="one abstract per call"):
+        make_pairs.main()
     rm.set_task.func("file-summary")
-
 
 def test_import_default_tolerates_a_code_channel_without_file_summary(tmp_path):
     before = rm.TASK.name

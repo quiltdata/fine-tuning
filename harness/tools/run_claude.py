@@ -107,7 +107,7 @@ def main():
     ap.add_argument("--examples", help="a draft examples file (path) instead of the published one")
     ap.add_argument("--prompt", help="a draft prompt file (path) instead of the published one "
                                      "(file-summary's fair baseline: summarizer_main_finding.md)")
-    ap.add_argument("--batch-size", type=int, help="abstract-facts: rows per call (default 10)")
+    ap.add_argument("--batch-size", type=int, help="file-summary only; abstract-facts is always one abstract per call")
     ap.add_argument("--allow-no-examples", action="store_true", help="run without examples (drafts and tests; the run is marked unpublished)")
     ap.add_argument("--no-fallback", action="store_true", help="no refusal fallback: every row is answered by --model or not at all")
     ap.add_argument("--per-file", action="store_true", help="one row per call instead of one batch per prefix and file type")

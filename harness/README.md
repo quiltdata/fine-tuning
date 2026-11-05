@@ -42,7 +42,7 @@ examples and schema.
 | Task | Input | Output | Batches |
 | --- | --- | --- | --- |
 | `file-summary` (default) | a file excerpt and mentions | `what`, `summary`, `about`, `entities`, `refers_to`, `evidence` | one article folder and file type |
-| `abstract-facts` | papers' main abstracts, at most 4,096 UTF-8 bytes each, as numbered plain text | one JSON object of answers, each with its abstract's number: one `about` fact and zero to two `findings`, each with an optional quote; length reported, not limited (cost counts verbosity) | 5 abstracts per call (`--batch-size`); answers matched to abstracts by number |
+| `abstract-facts` | one paper's main abstract, at most 4,096 UTF-8 bytes, as plain text | one JSON object: one `about` fact and zero to two `findings`, each with an optional quote; length reported, not limited (cost counts verbosity) | one abstract per call; the shared instructions are cached (a Bedrock cache point after the system prompt; vLLM prefix caching where the model allows it) |
 
 ### The abstract task
 

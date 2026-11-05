@@ -70,7 +70,7 @@ python3 -c "import boto3" 2>/dev/null || pip install -q boto3
 python3 -m vllm.entrypoints.openai.api_server --model $M --served-model-name lightning --port 8000 \
   --tensor-parallel-size __TP__ --max-model-len __MAXLEN__ --max-num-seqs 64 --gpu-memory-utilization 0.85 \
   --trust-remote-code --reasoning-parser-plugin $M/ultra_v3_reasoning_parser.py --reasoning-parser ultra_v3 \
-  --enable-auto-tool-choice --tool-call-parser qwen3_coder > $O/vllm.log 2>&1 &
+  --enable-auto-tool-choice --tool-call-parser qwen3_coder__PREFIX_CACHE__ > $O/vllm.log 2>&1 &
 python3 - <<'PY'
 import time, urllib.request, sys
 for i in range(180):
@@ -104,7 +104,9 @@ def main():
     ap.add_argument("--max-model-len", type=int, default=32768)
     ap.add_argument("--per-file", action="store_true", help="one row per call (whole documents)")
     ap.add_argument("--task", default="file-summary", choices=sorted(tasks.TASKS))
-    ap.add_argument("--batch-size", type=int, help="abstract-facts: rows per call (default 10)")
+    ap.add_argument("--batch-size", type=int, help="file-summary only; abstract-facts is always one abstract per call")
+    ap.add_argument("--prefix-caching", action="store_true",
+                    help="ask vLLM to reuse the shared prompt's KV cache across calls (vLLM leaves it off for this model)")
     ap.add_argument("--prompt", help="evaluation only: a draft prompt file (path) instead of the published one")
     ap.add_argument("--examples", help="evaluation only: a draft examples file (path) instead of the published one")
     a = ap.parse_args()
@@ -131,7 +133,8 @@ def main():
     command = (SAMPLE_CMD.replace("__N__", str(a.n)).replace("__T__", str(a.temperature)) if a.sample else
                EVAL_CMD.replace("__PER_FILE__", " --per-file" if a.per_file else "").replace("__DRAFTS__", drafts)
                ).replace("__TASK__", a.task).replace("__BATCH__", batch)
-    script = SCRIPT.replace("__COMMAND__", command).replace("__TP__", str(a.tp)).replace("__MAXLEN__", str(a.max_model_len))
+    script = (SCRIPT.replace("__COMMAND__", command).replace("__TP__", str(a.tp)).replace("__MAXLEN__", str(a.max_model_len))
+              .replace("__PREFIX_CACHE__", " --enable-prefix-caching" if a.prefix_caching else ""))
     s3.put_object(Bucket=bucket, Key=code_prefix + "run_eval.sh", Body=script.encode())  # arguments are capped at 256 chars
     image = f"763104351884.dkr.ecr.{a.region}.amazonaws.com/vllm:server-sagemaker-cuda-v2.2"
     sm = boto3.client("sagemaker", region_name=a.region)

@@ -4,7 +4,7 @@
 --task picks the task (tasks.py): its prompt and examples, output schema, what the model sees of
 each input row, and how rows are batched. The default, file-summary, is the earlier summarizer
 (batches of one prefix and one file type, prompts/summarizer.md, schemas/output.schema.json);
-abstract-facts is the abstract task (batches of --batch-size abstracts, default 10). run.json
+abstract-facts is the abstract task (one abstract per call, system prompt cached). run.json
 records the task with SHA-256 of its prompt, examples and schema.
 Each model gets the strongest structured output its server offers:
 
@@ -21,8 +21,9 @@ Each model gets the strongest structured output its server offers:
              a json_schema response_format (guided decoding). --no-thinking turns off the
              model's reasoning through the chat template (Nemotron 3.5 Lightning honours it).
 
-Bedrock cost is tokens times tools/model_rates.json, with cache tokens at the input
-rate (an upper bound). A SageMaker endpoint is costed by instance time. By default that's
+Bedrock cost is tokens times tools/model_rates.json. Converse calls put a cache point after the
+system prompt, which every call shares; cache writes and reads are costed at the model's cache
+rates where model_rates.json gives them, else at the input rate (an upper bound). A SageMaker endpoint is costed by instance time. By default that's
 its hourly rate over its sustained throughput with every request slot busy, which is what
 Bedrock's per-token prices assume of their own hardware. --cost-basis wall prices the run's
 own wall clock instead. run.json's "instance" block reports both.
@@ -142,18 +143,23 @@ class Bedrock:
             read_timeout=600, connect_timeout=10, retries={"max_attempts": 10, "mode": "adaptive"}))
         self.mode = "tool"  # downgraded once if the model refuses it: tool -> tool-auto -> text
         self.max_tokens = args.max_tokens
+        self.cache = True  # a cache point after the system prompt; dropped once if the model rejects it
+
+    def system(self, text):
+        """The system prompt, then a cache point: every call shares it, so it's written once and read after."""
+        return [{"text": text}] + ([{"cachePoint": {"type": "default"}}] if self.cache else [])
 
     def request(self, rows, extra=""):
         req = dict(modelId=self.args.model, messages=[{"role": "user", "content": [{"text": user_message(rows, REQUIRED_FACTS) + extra}]}],
                    inferenceConfig={"maxTokens": self.max_tokens})
         tool = {"tools": [{"toolSpec": {"name": "record_rows", "inputSchema": {"json": API_SCHEMA}}}]}
         if self.mode == "tool":
-            req.update(system=[{"text": SYSTEM}], toolConfig={**tool, "toolChoice": {"tool": {"name": "record_rows"}}})
+            req.update(system=self.system(SYSTEM), toolConfig={**tool, "toolChoice": {"tool": {"name": "record_rows"}}})
         elif self.mode == "tool-auto":
-            req.update(system=[{"text": SYSTEM + "\n\nAnswer only by calling the `record_rows` tool."}],
+            req.update(system=self.system(SYSTEM + "\n\nAnswer only by calling the `record_rows` tool."),
                        toolConfig={**tool, "toolChoice": {"auto": {}}})
         else:
-            req.update(system=[{"text": SYSTEM + TASK.text_instruction}])
+            req.update(system=self.system(SYSTEM + TASK.text_instruction))
         return req
 
     def call(self, rows, extra=""):
@@ -164,7 +170,9 @@ class Bedrock:
                 break
             except self.client.exceptions.ValidationException as e:
                 msg = str(e).lower()
-                if self.mode == "tool" and "tool" in msg and ("choice" in msg or "support" in msg):
+                if self.cache and "cach" in msg:
+                    self.cache = False
+                elif self.mode == "tool" and "tool" in msg and ("choice" in msg or "support" in msg):
                     self.mode = "tool-auto"
                 elif self.mode != "text" and "tool" in msg:
                     self.mode = "text"
@@ -176,12 +184,21 @@ class Bedrock:
         rec = {"model_served": self.args.model, "mode": self.mode, "stop_reason": resp.get("stopReason"),
                "input_tokens": u.get("inputTokens", 0), "output_tokens": u.get("outputTokens", 0),
                "cache_write_tokens": u.get("cacheWriteInputTokens", 0), "cache_read_tokens": u.get("cacheReadInputTokens", 0)}
-        r = RATES["bedrock"].get(self.args.model)
-        prompt = rec["input_tokens"] + rec["cache_write_tokens"] + rec["cache_read_tokens"]
-        rec["cost_usd"] = round((prompt * r["input"] + rec["output_tokens"] * r["output"]) / 1e6, 6) if r else ""
+        rec["cost_usd"] = token_cost(RATES["bedrock"].get(self.args.model), rec)
         blocks = resp["output"]["message"]["content"]
         tool_input = next((b["toolUse"]["input"] for b in blocks if "toolUse" in b), None)
         return (tool_input if tool_input is not None else "".join(b.get("text", "") for b in blocks)), rec
+
+
+def token_cost(r, rec, multiplier=1.0):
+    """USD for one call: input, output, and cache writes and reads at the model's cache rates if
+    model_rates.json gives them, else at the input rate (an upper bound)."""
+    if not r:
+        return ""
+    usd = (rec["input_tokens"] * r["input"] + rec["output_tokens"] * r["output"]
+           + rec["cache_write_tokens"] * r.get("cache_write", r["input"])
+           + rec["cache_read_tokens"] * r.get("cache_read", r["input"]))
+    return round(usd * multiplier / 1e6, 6)
 
 
 TIER_MULTIPLIER = {"default": 1.0, "flex": 0.5, "priority": 1.75}  # Bedrock service tiers, applied to standard rates
@@ -221,9 +238,8 @@ class BedrockChat:
         rec = {"model_served": reply.get("model", self.args.model), "mode": f"chat-json_schema-{reply.get('service_tier', self.args.service_tier)}",
                "stop_reason": choice.get("finish_reason"), "input_tokens": usage.get("prompt_tokens", 0) - cached,
                "output_tokens": usage.get("completion_tokens", 0), "cache_write_tokens": 0, "cache_read_tokens": cached}
-        r = RATES["bedrock"].get(self.args.model)
         m = TIER_MULTIPLIER.get(reply.get("service_tier", self.args.service_tier), 1.0)
-        rec["cost_usd"] = round(m * (usage.get("prompt_tokens", 0) * r["input"] + rec["output_tokens"] * r["output"]) / 1e6, 6) if r else ""
+        rec["cost_usd"] = token_cost(RATES["bedrock"].get(self.args.model), rec, m)
         return (choice.get("message") or {}).get("content") or "", rec
 
 
@@ -393,7 +409,7 @@ def main():
     ap.add_argument("--task", default="file-summary", choices=sorted(tasks.TASKS))
     ap.add_argument("--prompt", help="a draft prompt file (path) instead of the published one; the run is marked unpublished")
     ap.add_argument("--examples", help="a draft examples file (path) instead of the published one")
-    ap.add_argument("--batch-size", type=int, help="abstract-facts: rows per call (default 10)")
+    ap.add_argument("--batch-size", type=int, help="file-summary only; abstract-facts is always one abstract per call")
     ap.add_argument("--allow-no-examples", action="store_true", help="run without examples (drafts and tests; the run is marked unpublished)")
     args = ap.parse_args()
     set_task(args.task, args.prompt, args.allow_no_examples, examples=args.examples)
