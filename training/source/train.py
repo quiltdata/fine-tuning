@@ -311,6 +311,8 @@ def main():
     ap.add_argument("--dpo_beta", type=float, default=0, help=">0: preference pairs and the DPO loss (dpo.py)")
     ap.add_argument("--sft_weight", type=float, default=1.0, help="--dpo_beta only: weight of the chosen answer's NLL")
     args, _ = ap.parse_known_args()
+    if not (math.isfinite(args.dpo_beta) and args.dpo_beta >= 0):  # negative beta would favour the rejected answers
+        ap.error(f"--dpo_beta must be 0 (SFT) or a positive number, not {args.dpo_beta}")
     started = time.time()
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR, trust_remote_code=True)

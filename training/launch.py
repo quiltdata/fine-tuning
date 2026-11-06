@@ -13,6 +13,7 @@ Usage: python3 launch.py <name-suffix> <train.jsonl> [--max-examples N] [--max-s
 """
 import argparse
 import io
+import math
 import os
 import tarfile
 from pathlib import Path
@@ -51,6 +52,8 @@ def main():
     ap.add_argument("--spot", action="store_true", help="managed Spot: a separate capacity pool and quota, about 70%% cheaper")
     ap.add_argument("--max-wait-hours", type=float, default=12, help="--spot only: give up if no capacity by then")
     a = ap.parse_args()
+    if not (math.isfinite(a.dpo_beta) and a.dpo_beta >= 0):  # fail here, before a job is created
+        ap.error(f"--dpo-beta must be 0 (SFT) or a positive number, not {a.dpo_beta}")
     REGION = a.region
     BUCKET, IMAGE, BASE = region_paths(REGION)
 
