@@ -9,6 +9,7 @@ the JumpStart cache. --merge writes the merged model to the job's checkpoint pre
 Usage: python3 launch.py <name-suffix> <train.jsonl> [--max-examples N] [--max-steps N] [--epochs E]
                          [--lr LR] [--rank R] [--grad-accum G] [--merge] [--max-hours H]
                          [--region us-east-1|us-east-2] [--spot [--max-wait-hours H]] [--diagnose]
+                         [--init-adapter S3] [--dpo-beta B [--sft-weight W]]
 """
 import argparse
 import io
@@ -43,6 +44,8 @@ def main():
     ap.add_argument("--diagnose", action="store_true", help="check weights, kernel paths and generation, then exit")
     ap.add_argument("--merge-adapter", help="S3 prefix of a LoRA adapter: merge it into the base and exit (no training)")
     ap.add_argument("--init-adapter", help="S3 prefix of a LoRA adapter to continue training from")
+    ap.add_argument("--dpo-beta", type=float, default=0, help=">0: train_jsonl holds preference pairs (source/dpo.py)")
+    ap.add_argument("--sft-weight", type=float, default=1.0, help="--dpo-beta only: weight of the chosen answer's NLL")
     ap.add_argument("--max-hours", type=float, default=2)
     ap.add_argument("--region", default="us-east-2", choices=["us-east-1", "us-east-2"], help="the role allows both")
     ap.add_argument("--spot", action="store_true", help="managed Spot: a separate capacity pool and quota, about 70%% cheaper")
@@ -66,7 +69,7 @@ def main():
           "epochs": a.epochs, "lr": a.lr, "rank": a.rank, "alpha": 2 * a.rank, "grad_accum": a.grad_accum, "batch": a.batch,
           "max_examples": a.max_examples, "max_steps": a.max_steps, "merge": int(a.merge),
           "diagnose": int(a.diagnose), "merge_only": int(bool(a.merge_adapter)),
-          "init_adapter": int(bool(a.init_adapter))}
+          "init_adapter": int(bool(a.init_adapter)), "dpo_beta": a.dpo_beta, "sft_weight": a.sft_weight}
     sm = boto3.client("sagemaker", region_name=REGION)
     sm.create_training_job(
         TrainingJobName=name,

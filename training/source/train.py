@@ -17,6 +17,10 @@ shared expert's MLP; the 128 routed experts and the router stay frozen.
 Hyperparameters (SageMaker passes them as --name value): epochs, lr, rank, alpha, max_len,
 max_examples, max_steps, batch, grad_accum, save_steps, merge, diagnose. Trainer checkpoints go
 to /opt/ml/checkpoints/trainer and a restarted (Spot) job resumes from the latest one.
+
+--dpo_beta > 0 trains on preference pairs instead (dpo.py): each line {"system", "user", "chosen",
+"rejected"}, batch counted in pairs. Dropout is off, and the reference log-probabilities are those
+of the model as loaded (with --init_adapter, that adapter), saved to /opt/ml/checkpoints.
 """
 import argparse
 import json
@@ -57,6 +61,8 @@ install_kernels()  # before transformers imports the modeling code, which checks
 import torch  # noqa: E402
 from peft import LoraConfig, get_peft_model  # noqa: E402
 from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments  # noqa: E402
+
+import dpo  # noqa: E402
 
 MODEL_DIR = os.environ.get("SM_CHANNEL_MODEL", "/opt/ml/input/data/model")
 TRAIN_DIR = os.environ.get("SM_CHANNEL_TRAIN", "/opt/ml/input/data/train")
@@ -164,6 +170,55 @@ class AnswerOnlyTrainer(Trainer):
         return (loss, None) if return_outputs else loss
 
 
+class PreferenceTrainer(Trainer):
+    """DPO plus the chosen answer's NLL (dpo.dpo_loss), from answer-position log-probabilities only."""
+
+    def __init__(self, *args, beta, sft_weight, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.beta, self.sft_weight, self.stats = beta, sft_weight, []
+        self.model_accepts_loss_kwargs = False  # the loss is a mean per pair: let the Trainer divide by grad_accum
+
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        causal_lm = model.get_base_model() if hasattr(model, "get_base_model") else model
+        hidden = causal_lm.backbone(input_ids=inputs["input_ids"], attention_mask=inputs["attention_mask"],
+                                    use_cache=False)[0]
+        policy, counts = dpo.sequence_logps(hidden, inputs["labels"], causal_lm.lm_head)
+        loss, stats = dpo.dpo_loss(policy, inputs["ref"], counts, self.beta, self.sft_weight)
+        self.stats.append(stats)
+        if len(self.stats) >= self.args.gradient_accumulation_steps:
+            print(json.dumps({k: round(sum(s[k] for s in self.stats) / len(self.stats), 4) for k in stats}), flush=True)
+            self.stats = []
+        loss = loss.to(inputs["input_ids"].device)
+        return (loss, None) if return_outputs else loss
+
+
+def reference_logps(model, data, batch, pad_id):
+    """Each pair's [chosen, rejected] summed answer log-probabilities under the model as it is now,
+    computed once and saved with the checkpoints, so a resumed job keeps the original reference."""
+    path = os.path.join(CHECKPOINT_DIR, "ref_logps.json")
+    if os.path.exists(path):
+        refs = json.load(open(path))
+        assert len(refs) == len(data), "saved reference log-probabilities don't match the pairs"
+    else:
+        started, refs = time.time(), []
+        causal_lm = model.get_base_model() if hasattr(model, "get_base_model") else model
+        model.eval()
+        with torch.no_grad():
+            for i in range(0, len(data), batch):
+                inputs = dpo.collate_pairs(data[i:i + batch], pad_id)
+                hidden = causal_lm.backbone(input_ids=inputs["input_ids"].to(model.device),
+                                            attention_mask=inputs["attention_mask"].to(model.device), use_cache=False)[0]
+                lp, _ = dpo.sequence_logps(hidden, inputs["labels"], causal_lm.lm_head)
+                b = len(lp) // 2
+                refs += [[c, r] for c, r in zip(lp[:b].tolist(), lp[b:].tolist())]
+        model.train()
+        os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+        json.dump(refs, open(path, "w"))
+        print(json.dumps({"reference_seconds": round(time.time() - started), "pairs": len(refs)}), flush=True)
+    for p, r in zip(data, refs):
+        p["ref"] = r
+
+
 def fix_embedding_name(merged):
     """transformers 5 saves this remote model's embeddings as backbone.embedding.weight; the checkpoint
     and vLLM's loader use backbone.embeddings.weight (vLLM failed to start on merge-v1). Rename it in the
@@ -248,6 +303,8 @@ def main():
     ap.add_argument("--diagnose", type=int, default=0, help="check weights, paths and generation, then exit")
     ap.add_argument("--merge_only", type=int, default=0, help="merge the adapter in the 'adapter' channel, then exit")
     ap.add_argument("--init_adapter", type=int, default=0, help="continue training the adapter in the 'adapter' channel")
+    ap.add_argument("--dpo_beta", type=float, default=0, help=">0: preference pairs and the DPO loss (dpo.py)")
+    ap.add_argument("--sft_weight", type=float, default=1.0, help="--dpo_beta only: weight of the chosen answer's NLL")
     args, _ = ap.parse_known_args()
     started = time.time()
 
@@ -255,10 +312,15 @@ def main():
     rows = [json.loads(l) for l in open(os.path.join(TRAIN_DIR, "train.jsonl"))]
     if args.max_examples:
         rows = rows[: args.max_examples]
-    data = [e for e in (encode(r, tokenizer, args.max_len) for r in rows) if e]
-    lengths = sorted(len(e["input_ids"]) for e in data)
+    if args.dpo_beta:
+        data = [e for e in (dpo.encode_pair(r, tokenizer, args.max_len) for r in rows) if e]
+        seqs = [e[side] for e in data for side in ("chosen", "rejected")]
+    else:
+        data = [e for e in (encode(r, tokenizer, args.max_len) for r in rows) if e]
+        seqs = data
+    lengths = sorted(len(e["input_ids"]) for e in seqs)
     print(json.dumps({"examples": len(rows), "kept": len(data), "dropped_too_long": len(rows) - len(data),
-                      "tokens": sum(lengths), "target_tokens": sum(sum(1 for t in e["labels"] if t != -100) for e in data),
+                      "tokens": sum(lengths), "target_tokens": sum(sum(1 for t in e["labels"] if t != -100) for e in seqs),
                       "len_p50": lengths[len(lengths) // 2], "len_max": lengths[-1]}), flush=True)
 
     model = AutoModelForCausalLM.from_pretrained(MODEL_DIR, trust_remote_code=True, dtype=torch.bfloat16,
@@ -267,7 +329,7 @@ def main():
     print(json.dumps({"loaded_seconds": round(time.time() - started),
                       "gpu_gb": [round(torch.cuda.memory_allocated(i) / 2**30, 1) for i in range(torch.cuda.device_count())]}),
           flush=True)
-    probe = torch.tensor([data[0]["input_ids"][:256]], device=model.device)
+    probe = torch.tensor([seqs[0]["input_ids"][:256]], device=model.device)
     if args.merge_only:
         from peft import PeftModel
         adapter = os.environ.get("SM_CHANNEL_ADAPTER", "/opt/ml/input/data/adapter")
@@ -307,7 +369,16 @@ def main():
     if os.path.isdir(trainer_dir):
         done = sorted((d for d in os.listdir(trainer_dir) if d.startswith("checkpoint-")), key=lambda d: int(d.split("-")[1]))
         resume = os.path.join(trainer_dir, done[-1]) if done else None
-    trainer = AnswerOnlyTrainer(
+    trainer_class, extra = AnswerOnlyTrainer, {}
+    collate_fn = lambda b: collate(b, tokenizer.pad_token_id)  # noqa: E731
+    if args.dpo_beta:
+        for module in model.modules():  # the policy and reference must score answers the same way
+            if isinstance(module, torch.nn.Dropout):
+                module.p = 0.0
+        reference_logps(model, data, args.batch, tokenizer.pad_token_id)
+        trainer_class, extra = PreferenceTrainer, {"beta": args.dpo_beta, "sft_weight": args.sft_weight}
+        collate_fn = lambda b: dpo.collate_pairs(b, tokenizer.pad_token_id)  # noqa: E731
+    trainer = trainer_class(
         model=model,
         args=TrainingArguments(
             output_dir=trainer_dir, num_train_epochs=args.epochs, max_steps=args.max_steps,
@@ -317,7 +388,8 @@ def main():
             report_to=[],
             remove_unused_columns=False, dataloader_num_workers=2),
         train_dataset=data,
-        data_collator=lambda b: collate(b, tokenizer.pad_token_id),
+        data_collator=collate_fn,
+        **extra,
     )
     print(json.dumps({"optimizer_steps": steps, "resume_from": resume}), flush=True)
     result = trainer.train(resume_from_checkpoint=resume)
