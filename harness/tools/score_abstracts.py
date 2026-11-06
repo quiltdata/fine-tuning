@@ -84,8 +84,14 @@ def graded(system, msg, schema, name, wanted, key, args):
                              max_tokens=2000)
         spent += rec.get("cost_usd") or 0
         rec.update(attempts=attempt, cost_usd=round(spent, 6))
+        verdicts = (res or {}).get("verdicts", [])
+        if isinstance(verdicts, str):  # some graders (Kimi K3) return the array as a JSON string
+            try:
+                verdicts = json.loads(verdicts)
+            except json.JSONDecodeError:
+                verdicts = []
         got = {str(v.get("id")).rstrip("."): (v.get(key).strip().lower() if isinstance(v.get(key), str) else v.get(key))
-               for v in (res or {}).get("verdicts", [])}
+               for v in (verdicts if isinstance(verdicts, list) else []) if isinstance(v, dict)}
         if set(wanted) <= set(got):
             return {k: got[k] for k in wanted}, (res or {}), rec
         rec["error"] = rec.get("error") or f"verdicts for {sorted(got)}, wanted {wanted}"
