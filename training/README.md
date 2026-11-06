@@ -101,4 +101,5 @@ NVFP4 Lightning. Keep the files as exported alongside (e.g. `modelopt-raw/`).
    scale), so use the reference artifact's list.
 
 After both, the quantization sections match the reference artifact except for the
-producer version.
+producer version. `fix_nvfp4_config.py <export_dir> <reference_dir> <out_dir>` applies both to
+the two JSON files and checks that result.
