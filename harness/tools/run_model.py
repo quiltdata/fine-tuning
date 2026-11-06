@@ -385,6 +385,20 @@ def split_filtered(backend, args, results, work, pool):
     return done
 
 
+def quote_first(schema):
+    """The schema with each fact's quote ahead of its text. Guided decoding (vLLM) writes properties in
+    schema order, so the model copies its support from the abstract before restating it."""
+    if isinstance(schema, list):
+        return [quote_first(x) for x in schema]
+    if not isinstance(schema, dict):
+        return schema
+    out = {k: quote_first(v) for k, v in schema.items()}
+    props = out.get("properties")
+    if isinstance(props, dict) and list(props) == ["fact", "quote"]:
+        out["properties"] = {"quote": props["quote"], "fact": props["fact"]}
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("inputs")
@@ -411,8 +425,12 @@ def main():
     ap.add_argument("--examples", help="a draft examples file (path) instead of the published one")
     ap.add_argument("--batch-size", type=int, help="file-summary only; abstract-facts is always one abstract per call")
     ap.add_argument("--allow-no-examples", action="store_true", help="run without examples (drafts and tests; the run is marked unpublished)")
+    ap.add_argument("--quote-first", action="store_true",
+                    help="abstract-facts on vLLM: generate each fact's quote before the fact (guided decoding keeps schema order)")
     args = ap.parse_args()
     set_task(args.task, args.prompt, args.allow_no_examples, examples=args.examples)
+    if args.quote_first:
+        globals()["API_SCHEMA"] = quote_first(API_SCHEMA)
     if args.required_facts:
         for f in map(json.loads, open(args.required_facts)):
             REQUIRED_FACTS[f["unit_id"]] = [k["fact"] for k in f["key_facts"]]
@@ -478,6 +496,7 @@ def main():
                     else "bedrock-chat" if args.chat else "bedrock"), "region": args.region,
         "workers": args.workers, "service_tier": args.service_tier if args.chat else None,
         "reasoning_effort": args.reasoning_effort if args.chat else None,
+        "quote_first": args.quote_first,
         "required_facts": args.required_facts,
         "rows_from": f"{args.split} ({args.only})" if args.only else args.inputs,
         "rate": None if args.openai_url else RATES["sagemaker" if args.sagemaker else "bedrock"].get(args.model),
