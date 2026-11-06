@@ -213,7 +213,12 @@ def reference_logps(model, data, batch, pad_id):
                 refs += [[c, r] for c, r in zip(lp[:b].tolist(), lp[b:].tolist())]
         model.train()
         os.makedirs(CHECKPOINT_DIR, exist_ok=True)
-        json.dump(refs, open(path, "w"))
+        tmp = path + ".tmp"  # write, then rename: a Spot interruption mid-write must not leave a truncated cache
+        with open(tmp, "w") as f:
+            json.dump(refs, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
         print(json.dumps({"reference_seconds": round(time.time() - started), "pairs": len(refs)}), flush=True)
     for p, r in zip(data, refs):
         p["ref"] = r
