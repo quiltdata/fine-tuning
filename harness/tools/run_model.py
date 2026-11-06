@@ -95,7 +95,17 @@ def fingerprint():
     return TASK.fingerprint(OVERRIDES["prompt"], OVERRIDES["examples"])
 
 
-set_task("file-summary")
+def _load_default(root=tasks.ROOT):
+    """The file-summary task at import, for importers that read SYSTEM etc. directly. Inside a
+    SageMaker job the code channel carries only the task being run, so a missing default is not an
+    error here: main() sets the task it was asked for."""
+    try:
+        set_task("file-summary", root=root)
+    except SystemExit:
+        pass
+
+
+_load_default()
 
 
 def batches(rows, per_file=False, size=None):

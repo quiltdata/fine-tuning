@@ -21,13 +21,16 @@ CONTAINER = json.loads((Path(__file__).resolve().parent / "lightning_container.j
 POOL = ["ml.g6e.xlarge", "ml.g6e.2xlarge"]
 TAGS = [*BASE_TAGS, {"Key": "purpose", "Value": "lightning-nvfp4-eval-temporary"}]
 ENV = {**CONTAINER["Environment"], "SM_VLLM_MAX_NUM_SEQS": "64"}
+# The AWS deep-learning container exists in every region under the same account and tag, but ECR
+# pulls can't cross regions: point the image at the endpoint's own region.
+IMAGE = CONTAINER["Image"].replace(".dkr.ecr.us-east-2.", f".dkr.ecr.{REGION}.")
 
 
 def create(name, prefix):
     sm = boto3.client("sagemaker", region_name=REGION)
     try:
         sm.create_model(ModelName=name, ExecutionRoleArn=ROLE, Tags=TAGS, PrimaryContainer={
-            "Image": CONTAINER["Image"], "Mode": "SingleModel", "Environment": ENV,
+            "Image": IMAGE, "Mode": "SingleModel", "Environment": ENV,
             "ModelDataSource": {"S3DataSource": {"S3Uri": prefix, "S3DataType": "S3Prefix", "CompressionType": "None"}}})
     except sm.exceptions.ClientError as e:
         if "already existing" not in str(e) and "already exists" not in str(e):

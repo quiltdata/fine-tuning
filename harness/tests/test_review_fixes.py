@@ -167,3 +167,9 @@ def test_make_pairs_keeps_the_answered_abstracts_of_a_batch(tmp_path, monkeypatc
     assert pair["rows"] == 4 and "text 2" not in pair["user"] and pair["user"].count("Abstract ") == 4
     assert [a["abstract"] for a in json.loads(pair["assistant"])["answers"]] == [1, 2, 3, 4]
     rm.set_task.func("file-summary")
+
+
+def test_import_default_tolerates_a_code_channel_without_file_summary(tmp_path):
+    before = rm.TASK.name
+    rm._load_default(root=tmp_path)  # no prompts/ or schemas/ there: no SystemExit, task unchanged
+    assert rm.TASK.name == before
