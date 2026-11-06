@@ -54,6 +54,8 @@ def main():
     a = ap.parse_args()
     if not (math.isfinite(a.dpo_beta) and a.dpo_beta >= 0):  # fail here, before a job is created
         ap.error(f"--dpo-beta must be 0 (SFT) or a positive number, not {a.dpo_beta}")
+    if a.dpo_beta and not (math.isfinite(a.sft_weight) and a.sft_weight >= 0):  # 0 = pure DPO
+        ap.error(f"--sft-weight must be 0 or a positive number, not {a.sft_weight}")
     REGION = a.region
     BUCKET, IMAGE, BASE = region_paths(REGION)
 

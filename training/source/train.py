@@ -313,6 +313,8 @@ def main():
     args, _ = ap.parse_known_args()
     if not (math.isfinite(args.dpo_beta) and args.dpo_beta >= 0):  # negative beta would favour the rejected answers
         ap.error(f"--dpo_beta must be 0 (SFT) or a positive number, not {args.dpo_beta}")
+    if args.dpo_beta and not (math.isfinite(args.sft_weight) and args.sft_weight >= 0):  # 0 = pure DPO
+        ap.error(f"--sft_weight must be 0 or a positive number, not {args.sft_weight}")
     started = time.time()
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR, trust_remote_code=True)
