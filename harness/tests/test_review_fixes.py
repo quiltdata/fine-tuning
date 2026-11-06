@@ -167,6 +167,7 @@ def test_make_pairs_one_pair_per_answered_abstract(tmp_path, monkeypatch):
         make_pairs.main()
     rm.set_task.func("file-summary")
 
+
 def test_import_default_tolerates_a_code_channel_without_file_summary(tmp_path):
     before = rm.TASK.name
     rm._load_default(root=tmp_path)  # no prompts/ or schemas/ there: no SystemExit, task unchanged
