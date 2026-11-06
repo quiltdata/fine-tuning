@@ -209,6 +209,8 @@ above:
 - Measure quality and cost on the **deployed** form before claiming either.
 - Record failures and corrections next to the results, not in place of them.
 
+The abstract model's method and results are in [ABSTRACTS.md](ABSTRACTS.md).
+
 ## What's not in this repo
 
 - **The datasets and answer keys.** [`harness/`](harness/) rebuilds them from PubMed

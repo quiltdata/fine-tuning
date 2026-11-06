@@ -62,9 +62,9 @@ The input rules live in `tools/abstracts.py`: which abstract is the main one, ho
 character, and the three-signal study-protocol rule (PubMed type, title, protocol headings).
 
 **The prompt and examples are data, not code.** The task's student-facing prompt and examples
-are published in the public data package
-([`quilt+s3://quilt-ai#package=models/nemotron-lightning`](https://nightly.quilttest.com/b/quilt-ai/packages/models/nemotron-lightning)),
-as `task/abstract_facts.md` and `task/abstract_examples.md`, written by a person, not a model. The
+are published in the public data package (`quilt+s3://quilt-ai#package=models/nemotron-lightning`),
+as `task/abstract_facts.md` and `task/abstract_examples.md`, drafted with Claude and reviewed by the
+project; the student sees them only as the instructions it answers. The
 tools read them from a local copy of that package, `FINE_TUNING_DATA` in `.env`. Runs stop until
 they exist.
 
