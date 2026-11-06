@@ -42,7 +42,7 @@ examples and schema.
 | Task | Input | Output | Batches |
 | --- | --- | --- | --- |
 | `file-summary` (default) | a file excerpt and mentions | `what`, `summary`, `about`, `entities`, `refers_to`, `evidence` | one article folder and file type |
-| `abstract-facts` | papers' main abstracts, at most 4,096 UTF-8 bytes each, as numbered plain text | one JSON object of answers, each with its abstract's number: one `about` fact and zero to two `findings`, each with an optional quote; length reported, not limited (cost counts verbosity) | 5 abstracts per call (`--batch-size`); answers matched to abstracts by number |
+| `abstract-facts` | one paper's main abstract, at most 4,096 UTF-8 bytes, as plain text | one JSON object: one `about` fact and zero to two `findings`, each with an optional quote; length reported, not limited (cost counts verbosity) | one abstract per call; the shared instructions are cached (a Bedrock cache point after the system prompt; vLLM prefix caching where the model allows it) |
 
 ### The abstract task
 
@@ -62,9 +62,9 @@ The input rules live in `tools/abstracts.py`: which abstract is the main one, ho
 character, and the three-signal study-protocol rule (PubMed type, title, protocol headings).
 
 **The prompt and examples are data, not code.** The task's student-facing prompt and examples
-are published in the public data package
-([`quilt+s3://quilt-ai#package=models/nemotron-lightning`](https://nightly.quilttest.com/b/quilt-ai/packages/models/nemotron-lightning)),
-as `task/abstract_facts.md` and `task/abstract_examples.md`, written by a person, not a model. The
+are published in the public data package (`quilt+s3://quilt-ai#package=models/nemotron-lightning`),
+as `task/abstract_facts.md` and `task/abstract_examples.md`, drafted with Claude and reviewed by the
+project; the student sees them only as the instructions it answers. The
 tools read them from a local copy of that package, `FINE_TUNING_DATA` in `.env`. Runs stop until
 they exist.
 

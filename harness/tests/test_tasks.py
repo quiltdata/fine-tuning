@@ -70,38 +70,31 @@ def test_published_and_draft_fingerprints(tmp_path):
     assert rm.fingerprint()["published"]
 
 
-def test_abstract_numbered_batches(tmp_path):  # 35e
+def test_abstract_one_per_call(tmp_path):
     task = tasks.get("abstract-facts", data=abstract_data(tmp_path))
     rows = [{"unit_id": f"PMC{i}.1", "abstract": f"Text {i}.", "title": "hidden", "protocol": "0"} for i in range(23)]
-    assert [len(b) for _, b in task.batches(rows)] == [5, 5, 5, 5, 3]
-    assert [len(b) for _, b in task.batches(rows, size=10)] == [10, 10, 3] and len(task.batches(rows, per_file=True)) == 23
-    assert task.batches(rows)[1][0] == ("batch-1", "abstract")
-    assert task.user_message(rows[:2]) == "Abstract 1:\nText 0.\n\nAbstract 2:\nText 1."  # numbered text: no ids, no title, no JSON
-    teacher = task.user_message(rows[:2], {"PMC1.1": ["A trial of X."]})
-    assert "Required content" in teacher and '{"2": ["A trial of X."]}' in teacher
+    assert [len(b) for _, b in task.batches(rows)] == [1] * 23 and task.batches(rows, size=1) == task.batches(rows)
+    assert task.batches(rows)[1][0] == ("abstract-1", "abstract")
+    with pytest.raises(ValueError):
+        task.batches(rows, size=5)  # one abstract per call: no batching to fall back to
+    assert task.user_message(rows[:1]) == "Text 0."  # the abstract alone: no id, no title, no number, no JSON
+    teacher = task.user_message(rows[1:2], {"PMC1.1": ["A trial of X."]})
+    assert teacher.startswith("Text 1.\n\nRequired content") and teacher.endswith('["A trial of X."]')
     api = task.api_schema()
-    answer = api["properties"]["answers"]["items"]
-    assert answer["required"] == ["abstract", "about", "findings"] and "unit_id" not in json.dumps(api)
-    assert answer["properties"]["about"]["required"] == ["fact", "quote"] and "$ref" not in json.dumps(api)
+    assert api["required"] == ["about", "findings"] and "unit_id" not in json.dumps(api) and "answers" not in json.dumps(api)
+    assert api["properties"]["about"]["required"] == ["fact", "quote"] and "$ref" not in json.dumps(api)
 
-
-def test_abstract_answers_matched_by_number(tmp_path):
+def test_abstract_one_answer(tmp_path):
     task = tasks.get("abstract-facts", data=abstract_data(tmp_path))
-    batch = [{"unit_id": "A.1", "abstract": "a"}, {"unit_id": "B.1", "abstract": "b"}]
+    batch = [{"unit_id": "A.1", "abstract": "a"}]
     a1, a2 = {"about": {"fact": "one"}, "findings": []}, {"about": {"fact": "two"}, "findings": []}
-    reply = task.rows_from_reply({"answers": [{"abstract": 2, **a2}, {"abstract": "1", **a1}]})
-    assert task.attach_ids(reply, batch) == [{**a2, "unit_id": "B.1"}, {**a1, "unit_id": "A.1"}]
-    assert task.attach_ids([{"abstract": 1, **a1}], batch) == [{**a1, "unit_id": "A.1"}]  # B.1 left unanswered: a missing row
-    for bad in ([{"abstract": 0, **a1}, {"abstract": 1, **a2}],      # numbered from 0: rejected, never shifted
-                [{"abstract": 1, **a1}, {"abstract": 1, **a2}],      # repeated
-                [{"abstract": 3, **a1}],                             # out of range
-                [{"abstract": True, **a1}], [{**a1}]):               # not a number; unnumbered in a batch of two
+    for reply in (a1, {"answers": [a1]}, [a1], {"answers": json.dumps([a1])}):
+        assert task.attach_ids(task.rows_from_reply(reply), batch) == [{**a1, "unit_id": "A.1"}]
+    assert task.attach_ids([{"abstract": 1, **a1}], batch) == [{**a1, "unit_id": "A.1"}]  # a stray number is dropped
+    for bad in ([a1, a2], []):  # two answers for one abstract, or none: rejected, never guessed
         with pytest.raises(ValueError):
             task.attach_ids(bad, batch)
-    assert task.attach_ids(task.rows_from_reply(a1), batch[:1]) == [{**a1, "unit_id": "A.1"}]  # one abstract, unnumbered
-    assert task.assistant_json([{**a1, "unit_id": "A.1"}, {**a2, "unit_id": "B.1"}]) == {
-        "answers": [{"abstract": 1, **a1}, {"abstract": 2, **a2}]}
-
+    assert task.assistant_json([{**a1, "unit_id": "A.1"}]) == a1
 
 def test_missing_findings_stay_missing(tmp_path):
     import check_outputs
@@ -110,33 +103,41 @@ def test_missing_findings_stay_missing(tmp_path):
     assert "findings" not in row and check_outputs.abstract_problems(row)
 
 
-def test_bedrock_tool_path_for_answers(tmp_path):
+def test_bedrock_tool_path_and_cache_point(tmp_path):
     rm.set_task("abstract-facts", data=abstract_data(tmp_path), allow_no_examples=True)
-    rows = [{"unit_id": "A.1", "abstract": "a"}, {"unit_id": "B.1", "abstract": "b"}]
-    answers = [{"abstract": 1, "about": {"fact": "one", "quote": ""}, "findings": []},
-               {"abstract": 2, "about": {"fact": "two", "quote": ""}, "findings": []}]
+    rows = [{"unit_id": "A.1", "abstract": "a"}]
+    answer = {"about": {"fact": "one", "quote": ""}, "findings": []}
+    seen = []
 
     class Client:
         class exceptions:
             ValidationException = type("VE", (Exception,), {})
-        def __init__(self, tool_input, stop="tool_use"):
-            self.tool_input, self.stop = tool_input, stop
+        def __init__(self, tool_input, stop="tool_use", cache_ok=True):
+            self.tool_input, self.stop, self.cache_ok = tool_input, stop, cache_ok
         def converse(self, **req):
+            seen.append(req["system"])
             assert req["toolConfig"]["toolChoice"] == {"tool": {"name": "record_rows"}}
-            return {"stopReason": self.stop, "usage": {"inputTokens": 10, "outputTokens": 5},
+            if not self.cache_ok and any("cachePoint" in b for b in req["system"]):
+                raise self.exceptions.ValidationException("This model doesn't support caching")
+            return {"stopReason": self.stop, "usage": {"inputTokens": 10, "outputTokens": 5, "cacheReadInputTokens": 1000},
                     "output": {"message": {"content": [{"toolUse": {"input": self.tool_input}}]}}}
 
     args = SimpleNamespace(model="us.anthropic.claude-haiku-5-5", region="r", max_tokens=100)
-    for tool_input in ({"answers": answers}, {"answers": json.dumps(answers)}, json.dumps({"answers": answers})):
+    for tool_input in (answer, {"answers": [answer]}, json.dumps(answer)):
         be = rm.Bedrock.__new__(rm.Bedrock)
-        be.args, be.client, be.mode, be.max_tokens = args, Client(tool_input), "tool", 100
-        record, out = rm.call(be, args, 0, ("batch-0", "abstract"), rows)
-        assert record["error"] == "" and [o["unit_id"] for o in out] == ["A.1", "B.1"] and out[0]["about"] == {"fact": "one"}
-    be.client = Client({"answers": '[{"abstract": 1, "ab'}, stop="content_filtered")
-    record, out = rm.call(be, args, 0, ("batch-0", "abstract"), rows)
-    assert out == [] and record["filtered"] == 2 and "content filter" in record["error"]
+        be.args, be.client, be.mode, be.max_tokens, be.cache = args, Client(tool_input), "tool", 100, True
+        record, out = rm.call(be, args, 0, ("abstract-0", "abstract"), rows)
+        assert record["error"] == "" and [o["unit_id"] for o in out] == ["A.1"] and out[0]["about"] == {"fact": "one"}
+    assert seen[-1][-1] == {"cachePoint": {"type": "default"}}  # the shared system prompt is cached
+    r = rm.RATES["bedrock"]["us.anthropic.claude-haiku-5-5"]
+    assert record["cost_usd"] == round((10 * r["input"] + 5 * r["output"] + 1000 * r["cache_read"]) / 1e6, 6)
+    be.client = Client(answer, cache_ok=False)  # a model without caching: the cache point is dropped once
+    record, out = rm.call(be, args, 0, ("abstract-0", "abstract"), rows)
+    assert record["error"] == "" and be.cache is False and seen[-1] == [seen[-1][0]]
+    be.client = Client('{"about": {"fact": "on', stop="content_filtered")
+    record, out = rm.call(be, args, 0, ("abstract-0", "abstract"), rows)
+    assert out == [] and record["filtered"] == 2 and "content filter" in record["error"]  # both attempts filtered
     rm.set_task("file-summary")
-
 
 def test_abstract_normalize_and_limits(tmp_path):
     task = tasks.get("abstract-facts", data=abstract_data(tmp_path))
@@ -148,9 +149,8 @@ def test_abstract_normalize_and_limits(tmp_path):
 
 def test_run_model_call_offline(tmp_path):
     rm.set_task("abstract-facts", data=abstract_data(tmp_path), allow_no_examples=True)
-    rows = [{"unit_id": "PMC1.1", "abstract": "A trial found X."}, {"unit_id": "PMC2.1", "abstract": "A protocol."}]
-    reply = ('```json\n{"answers": [{"abstract": 2, "about": {"fact": "A protocol.", "quote": ""}, "findings": []}, '
-             '{"abstract": 1, "about": {"fact": "A trial of X.", "quote": ""}, "findings": [{"fact": "X fell 10%.", "quote": "found X"}]}]}\n```')
+    rows = [{"unit_id": "PMC1.1", "abstract": "A trial found X."}]
+    reply = '```json\n{"about": {"fact": "A trial of X.", "quote": ""}, "findings": [{"fact": "X fell 10%.", "quote": "found X"}]}\n```'
     seen = {}
 
     class Fake:
@@ -158,13 +158,11 @@ def test_run_model_call_offline(tmp_path):
             seen["user"] = rm.user_message(batch)
             return rm.parse_rows(reply), {"model_served": "fake", "mode": "json_schema", "input_tokens": 5, "output_tokens": 7}
 
-    record, out = rm.call(Fake(), SimpleNamespace(model="fake"), 0, ("batch-0", "abstract"), rows)
-    assert record["error"] == "" and record["rows_out"] == 2 and json.loads(record["unit_ids"]) == ["PMC1.1", "PMC2.1"]
-    assert seen["user"] == "Abstract 1:\nA trial found X.\n\nAbstract 2:\nA protocol."
-    by_id = {o["unit_id"]: o for o in out}
-    assert by_id["PMC1.1"]["findings"] == [{"fact": "X fell 10%.", "quote": "found X"}] and by_id["PMC2.1"]["about"] == {"fact": "A protocol."}
+    record, out = rm.call(Fake(), SimpleNamespace(model="fake"), 0, ("abstract-0", "abstract"), rows)
+    assert record["error"] == "" and record["rows_out"] == 1 and json.loads(record["unit_ids"]) == ["PMC1.1"]
+    assert seen["user"] == "A trial found X."
+    assert out[0]["findings"] == [{"fact": "X fell 10%.", "quote": "found X"}] and out[0]["about"] == {"fact": "A trial of X."}
     rm.set_task("file-summary")
-
 
 def test_make_pairs_mixed_batches_and_run_check(tmp_path):
     rows = [{"unit_id": str(i)} for i in range(57)]

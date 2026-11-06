@@ -4,7 +4,9 @@
   "us.anthropic.claude-opus-5-5": {
    "input": 4.4,
    "output": 22.0,
-   "source": "benchmark (matches tools/bedrock_prices.json regional)"
+   "cache_read": 0.22,
+   "cache_write": 5.5,
+   "source": "benchmark (matches tools/bedrock_prices.json regional); cache rates are Anthropic's multipliers on the input rate (read 0.05x, 5-minute write 1.25x), not yet confirmed for Bedrock"
   },
   "us.anthropic.claude-sonnet-5-5": {
    "input": 2.2,
@@ -14,7 +16,9 @@
   "us.anthropic.claude-haiku-5-5": {
    "input": 0.11,
    "output": 0.55,
-   "source": "benchmark: stated rate"
+   "cache_read": 0.011,
+   "cache_write": 0.1375,
+   "source": "benchmark: stated rate; cache rates are Anthropic's multipliers on the input rate (read 0.1x, 5-minute write 1.25x), not yet confirmed for Bedrock"
   },
   "us.openai.gpt-6-astra": {
    "input": 11.0,
@@ -174,6 +178,18 @@
    "usd_per_hour": 2.8026,
    "region": "us-east-2",
    "source": "price list (AmazonSageMaker USE2-Host:ml.g6e.2xlarge); temporary benchmark endpoint for the v5 NVFP4 export, max_num_seqs 64. Same single L40S as ml.g6e.xlarge ($2.6054/h), which had no capacity on 2026-10-27; production qurator-nemotron runs on 2xlarge"
+  },
+  "abstract-lightning-rft2-nvfp4-use1": {
+   "instance": "ml.g6e.xlarge",
+   "usd_per_hour": 2.6054,
+   "region": "us-east-1",
+   "source": "price list (AmazonSageMaker USE1-Host:ml.g6e.xlarge); temporary endpoint for the abstract-task fine-tune (RFT v2) exported to NVFP4, max_num_seqs 64"
+  },
+  "abstract-lightning-rft2-nvfp4-xl": {
+   "instance": "ml.g6e.xlarge",
+   "usd_per_hour": 2.6054,
+   "region": "us-east-2",
+   "source": "price list (AmazonSageMaker USE2-Host:ml.g6e.xlarge); the same endpoint in us-east-2"
   }
  }
 }

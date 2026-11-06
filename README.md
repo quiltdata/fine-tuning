@@ -13,6 +13,7 @@ results.
 | Path | What's there |
 | --- | --- |
 | [`METHODOLOGY.md`](METHODOLOGY.md) | How the model was trained and judged, the results, and the corrections that changed them. **Start here.** |
+| [`ABSTRACTS.md`](ABSTRACTS.md) | The second model: key facts from a scientific abstract. Method, results, and where it falls short. |
 | [`training/`](training/) | The post-training code: LoRA SFT, reward-stage selection, evaluation, and NVFP4 export, run as SageMaker jobs. See [`training/README.md`](training/README.md). |
 | [`harness/`](harness/) | Building the datasets, running any model, and checking and scoring its outputs. See [`harness/README.md`](harness/README.md). |
 
@@ -26,10 +27,12 @@ The served model falls four rows short of our own 85% verbatim-quote bar, and on
 whole papers a fairly prompted Opus is about 10 points ahead. Details in
 [`METHODOLOGY.md`](METHODOLOGY.md).
 
-**Next: an abstract key-fact extractor.** A narrower model that reads a scientific
-**abstract** and extracts one fact about what the study is and one or two about its
-findings. Not yet run; its bar will be set before training, against a reference model
-given a fair task-specific prompt.
+**Done, short of its bar: an abstract key-fact extractor.** A narrower model that reads
+a scientific **abstract** and states what the study is and its one or two main findings.
+Two reward rounds took Lightning from 83% / 76% (findings recall / faithfulness, one
+grader) to 87% / 91%, past stock Lightning with thinking on, but short of the bar set
+before training, Claude Haiku 5.5 at 91% / 95%. Served in 4-bit on one GPU it costs a
+measured $0.0146 per 100 abstracts, under half of Haiku. Details in [`ABSTRACTS.md`](ABSTRACTS.md).
 
 ## Configuration
 
