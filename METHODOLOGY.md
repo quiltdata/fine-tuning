@@ -55,7 +55,9 @@ metric is **top-2 key-fact recall**.
 - **No Claude or OpenAI output touches training**, including selecting training data.
   Anthropic's terms prohibit using outputs to train models without authorization;
   OpenAI's were assumed similar. Claude serves **only** as an evaluation baseline and
-  a grader.
+  a grader. (This holds for the model on this page. The abstract model's later reward
+  rounds relaxed it, with Claude Sonnet judging which of the student's own samples to
+  keep; see [ABSTRACTS.md §3](ABSTRACTS.md#3-teacher-and-what-may-touch-training).)
 - **The teacher thinks; the student doesn't.** Kimi ran at high reasoning effort; the
   student learns the answer alone.
 - **Training data is filtered by code only:** valid schema, every row returned, every
