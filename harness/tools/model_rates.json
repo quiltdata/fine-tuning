@@ -190,6 +190,12 @@
    "usd_per_hour": 2.6054,
    "region": "us-east-2",
    "source": "price list (AmazonSageMaker USE2-Host:ml.g6e.xlarge); the same endpoint in us-east-2"
+  },
+  "abstract-lightning-dpo2-nvfp4-xl": {
+   "instance": "ml.g6e.xlarge",
+   "usd_per_hour": 2.6054,
+   "region": "us-east-2",
+   "source": "price list (AmazonSageMaker USE2-Host:ml.g6e.xlarge); temporary endpoint for the DPO2 NVFP4 export"
   }
  }
 }
