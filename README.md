@@ -27,15 +27,17 @@ The served model falls four rows short of our own 85% verbatim-quote bar, and on
 whole papers a fairly prompted Opus is about 10 points ahead. Details in
 [`METHODOLOGY.md`](METHODOLOGY.md).
 
-**Done, short of its bar: an abstract key-fact extractor.** A narrower model that reads
-a scientific **abstract** and states what the study is and its one or two main findings.
-Four reward rounds took Lightning from 83% / 76% (findings recall / faithfulness, GPT-6.1
-grading) to 88% / 92% on 935 held-out abstracts, past stock Lightning with thinking on.
-The bar set before training was Claude Haiku 5.5, at 90% / 95%: the recall gap is within
-two points, a tie; the faithfulness gap is 3.2 points with its whole interval outside two.
-A fifth round did not move it, and we stopped. Served in 4-bit on one GPU the earlier RFT v2
-costs a measured $0.0146 per 100 abstracts, under half of Haiku. Details in
-[`ABSTRACTS.md`](ABSTRACTS.md).
+**Done, at its bar under the primary grader: an abstract key-fact extractor.** A
+narrower model that reads a scientific **abstract** and states what the study is and
+its one or two main findings. Four reward rounds took Lightning from 83% / 76%
+(findings recall / faithfulness, GPT-6.1 grading) to 88% / 92% on 935 held-out
+abstracts and stalled three points short of the bar, Claude Haiku 5.5 at 90% / 95%.
+A preference round on minimal pairs (each pair differs in one fact) then took it to
+**90% / 95%**: level with Haiku on both measures, every interval inside the two-point
+rule. Sonnet 5.5, the second grader, still scores its faithfulness 1.8 points below
+Haiku, and it invents findings on no-result abstracts five times as often. Served in
+4-bit on one GPU it costs a measured **$0.0141 per 100 abstracts**, 42% of Haiku.
+Details in [`ABSTRACTS.md`](ABSTRACTS.md).
 
 ## Configuration
 

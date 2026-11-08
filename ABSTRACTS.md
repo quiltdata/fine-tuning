@@ -9,34 +9,44 @@ every grader verdict are in the public package
 
 ## The result, honestly
 
-- **It misses the bar, by a measured amount.** The bar, fixed before training, was
-  Claude Haiku 5.5. On 935 held-out abstracts (two test sets, §7), the best fine-tune
-  (RFT v4, BF16) conveys **88.0%** of the key's findings against Haiku's 89.8%, a gap of
-  −1.8 [−3.7, +0.1]: within the two-point rule, a tie. Its faithfulness is **91.8%**
-  against Haiku's 95.0%, a gap of −3.2 [−4.4, −2.0]: the whole interval is outside the
-  rule. Those are GPT-6.1's numbers, the primary grader (§4). Sonnet 5.5 grades the
-  recall gap the same (−1.3) and the faithfulness gap wider (−6.4), and from RFT v4 on
-  Sonnet is no longer an independent grader (§3).
-- **Training moved it a long way, then stopped.** Stock Lightning states 83% of
-  findings but only 76% / 67% faithfully. Supervised training and four reward rounds
-  took faithfulness to 92% / 88% and recall to 88–89%, and every answer is valid. The
-  last three rounds moved faithfulness by about two points in all and recall not at
-  all; a fifth round moved neither. The second test set, built after the fact to check
-  the first, reproduced every run within a point.
+- **It meets the bar under the primary grader, and one grader dissents.** The bar,
+  fixed before training, was Claude Haiku 5.5, within two points on both measures. On
+  935 held-out abstracts (two test sets, §7), the final model (a preference round on
+  minimal pairs from RFT v4, §8, served in 4-bit) conveys **89.9%** of the key's
+  findings against Haiku's 89.8% and states **95.4%** of its facts faithfully against
+  Haiku's 95.0%: gaps of +0.1 [−1.7, +2.0] and +0.4 [−0.6, +1.6], both intervals
+  inside the rule. Those are GPT-6.1's numbers, the primary grader (§4). Sonnet 5.5
+  grades recall the same (+1.2) and faithfulness 1.8 points below Haiku
+  [−3.0, −0.4], a real disagreement; from RFT v4 on Sonnet also judged what the model
+  trained on and is no longer an independent grader (§3). The bar was set and the
+  result read on GPT before this round ran; the Sonnet column stays so the reader can
+  weigh it.
+- **Training moved it a long way, stalled, then one more idea moved it.** Stock
+  Lightning states 83% of findings but only 76% / 67% faithfully. Supervised training
+  and four reward rounds took faithfulness to 92% / 88% and recall to 88–89%, and every
+  answer is valid. The last three rounds moved faithfulness by about two points in all
+  and recall not at all; a fifth round moved neither. A preference round whose pairs
+  differ in one fact (§8) then added 3.4 points of faithfulness [+2.2, +4.4] and 2.5 of
+  recall in one epoch. The second test set, built after the fact to check the first,
+  reproduced every run within a point.
 - **No prompt we could write did the same.** Tuning the prompt for Lightning on a dev
   set made it more cautious and cost recall. Turning thinking on helped faithfulness,
   at about 45 times the output tokens; the fine-tune without thinking now beats stock
   Lightning with thinking on, at about 2% of its output tokens.
-- **Invented findings can be fixed, at a price.** The fine-tune states a finding for
-  about half the abstracts whose key has none (Haiku: a fifth). Ninety no-findings
-  training rows (RFT v5) brought that down to Haiku's rate, and cost about a point of
-  recall; a preference round (§8) took it to zero and cost five.
+- **Invented findings are the gap that remains.** The fine-tune states a finding for
+  about half the abstracts whose key has none (Haiku: a fifth), and the final model
+  still does (47 of 74 pooled, Haiku 9). Ninety no-findings training rows (RFT v5)
+  brought that down to Haiku's rate and cost about a point of recall; the first
+  preference round (§8) took it to zero and cost five; the final round's pairs never
+  contrasted saying nothing with saying something, so it did not move.
 - **Most of the gap is the student's, not the teacher's.** Run as it made the training
   targets, Kimi K3 beats Haiku on recall and ties it on faithfulness under GPT (§8).
-- **Served the way it would ship, RFT v2 costs less than half of Haiku.** Exported to
-  4-bit NVFP4 and served on one L40S GPU, RFT v2 costs a measured **$0.0146 per 100
-  abstracts** against Haiku's $0.034, within noise of its BF16 quality. RFT v4 was not
-  exported; its served numbers are not measured.
+- **Served the way it would ship, it costs 42% of Haiku.** Exported to 4-bit NVFP4
+  and served on one L40S GPU, the final model costs a measured **$0.0141 per 100
+  abstracts** against Haiku's $0.0338 on the same 935 abstracts, and quantization cost
+  it nothing measurable (within half a point of BF16 on both measures, both graders).
+  The cost is the same as RFT v2's served cost: throughput depends on the model's size
+  and output length, not on what it learned.
 
 ## 1. Task
 
@@ -147,6 +157,7 @@ model's adapter, lr 5e-5.
 | **RFT v3** | Samples from RFT v2, Kimi selection: the last open-weight-only round | 89.8 / 88.7 | 90.2 / 84.9 | 9 |
 | **RFT v4** | Samples from RFT v3, Kimi on recall then **Sonnet 5.5 on faithfulness**: 1,031 own, 72 teacher's, 42 dropped | **89.2 / 88.3** | **92.0 / 88.2** | 10 |
 | **RFT v5** | The same from RFT v4 (1,030 own, 69 teacher's, 46 dropped) plus 90 no-findings abstracts with Kimi's empty answer, Sonnet-checked | 88.1 / 87.9 | 90.3 / 88.4 | 4 |
+| **DPO v2** | A preference round from RFT v4 on 1,667 minimal pairs: the chosen answer and the same answer with one fact replaced by a version Sonnet flagged twice, or by Kimi's edit dropping one qualifier (§8) | **89.6 / 89.1** | **94.3 / 92.6** | 9 |
 
 (SFT v1 trained on the five-per-call form and is superseded; see §1. Numbers on
 test set 1, GPT / Sonnet.)
@@ -172,7 +183,7 @@ test of this (hedge word in the source sentence, none in the fact) does not sepa
 the models: both drop hedges on about 20% of facts. The difference is what Sonnet was
 already judging at selection, and Sonnet passed these styles; one epoch of positives
 on about 1,100 examples shifts the style only so far and gives no signal about what
-not to do. That is where we stopped (§9).
+not to do. The preference round in §8 supplied that signal, one fact at a time.
 
 ## 7. Results
 
@@ -185,7 +196,9 @@ set 1; Claude costs are on-demand Bedrock prices with the instructions cached.
 | --- | --- | --- | --- | --- | --- | --- |
 | Claude Opus 5.5 (stretch) | 290 | 91.3 / 91.1 | 96.5 / 95.5 | 4 | 394 | $1.22 |
 | **Claude Haiku 5.5 (bar)** | 306 | **90.9 / 89.6** | **94.9 / 94.6** | 4 | 425 | $0.034 |
-| **Lightning RFT v4, BF16** | 306 | **89.2 / 88.3** | **92.0 / 88.2** | 10 | 233 | — (not a deployment) |
+| **Lightning DPO v2, NVFP4, 1 GPU (served)** | 306 | **91.3 / 91.1** | **95.0 / 93.0** | 10 | 227 | **$0.0146** measured |
+| Lightning DPO v2, BF16 | 306 | 89.6 / 89.1 | 94.3 / 92.6 | 9 | 228 | — (not a deployment) |
+| Lightning RFT v4, BF16 | 306 | 89.2 / 88.3 | 92.0 / 88.2 | 10 | 233 | — |
 | Lightning RFT v5, BF16 | 306 | 88.1 / 87.9 | 90.3 / 88.4 | 4 | 230 | — |
 | Lightning RFT v3, BF16 | 306 | 89.8 / 88.7 | 90.2 / 84.9 | 9 | 232 | — |
 | Lightning RFT v2, BF16 | 306 | 87.4 / 86.4 | 90.9 / 86.3 | 9 | 229 | — |
@@ -203,7 +216,9 @@ file-summary fine-tune and the earlier served measurements are in the package.)
 | --- | --- | --- | --- |
 | Claude Opus 5.5 (stretch) | 95.2 / 94.8 | 97.7 / 96.1 | — |
 | **Claude Haiku 5.5 (bar)** | **89.3 / 88.5** | **95.0 / 94.7** | 5 |
-| **Lightning RFT v4, BF16** | **87.4 / 87.3** | **91.7 / 88.2** | 35 |
+| **Lightning DPO v2, NVFP4 (served)** | **89.3 / 89.5** | **95.6 / 92.8** | 37 |
+| Lightning DPO v2, BF16 | 90.9 / 91.0 | 95.6 / 93.0 | 29 |
+| Lightning RFT v4, BF16 | 87.4 / 87.3 | 91.7 / 88.2 | 35 |
 | Lightning RFT v5, BF16 | 86.5 / 87.1 | 91.7 / 87.9 | 16 |
 | Lightning RFT v3, BF16 | 87.0 / 88.6 | 90.0 / 86.9 | 32 |
 
@@ -215,7 +230,9 @@ per abstract here, RFT v4's 229.
 | Model | Findings recall | Faithfulness |
 | --- | --- | --- |
 | **Claude Haiku 5.5 (bar)** | **89.8 / 88.9** | **95.0 / 94.6** |
-| **Lightning RFT v4, BF16** | **88.0 / 87.6** | **91.8 / 88.2** |
+| **Lightning DPO v2, NVFP4 (served)** | **89.9 / 90.1** | **95.4 / 92.9** |
+| Lightning DPO v2, BF16 | 90.5 / 90.3 | 95.1 / 92.9 |
+| Lightning RFT v4, BF16 | 88.0 / 87.6 | 91.8 / 88.2 |
 | Lightning RFT v5, BF16 | 87.0 / 87.4 | 91.2 / 88.0 |
 | Lightning RFT v3, BF16 | 87.9 / 88.6 | 90.0 / 86.2 |
 
@@ -223,7 +240,16 @@ per abstract here, RFT v4's 229.
 
 | Comparison | Set | Findings recall | Faithfulness |
 | --- | --- | --- | --- |
-| **RFT v4 − Haiku** | **pooled, GPT** | **−1.8 [−3.7, +0.1]** | **−3.2 [−4.4, −2.0]** |
+| **DPO v2 served − Haiku** | **pooled, GPT** | **+0.1 [−1.7, +2.0]** | **+0.4 [−0.6, +1.6]** |
+| DPO v2 served − Haiku | pooled, Sonnet | +1.2 [−0.7, +3.1] | −1.8 [−3.0, −0.4] |
+| DPO v2 served − Haiku | set 1, GPT | +0.4 [−2.7, +3.6] | +0.1 [−1.8, +1.9] |
+| DPO v2 served − Haiku | set 2, GPT | +0.0 [−2.2, +2.3] | +0.6 [−0.8, +2.0] |
+| DPO v2 BF16 − Haiku | pooled, GPT | +0.6 [−1.1, +2.4] | +0.2 [−0.9, +1.2] |
+| DPO v2 BF16 − Haiku | pooled, Sonnet | +1.5 [−0.4, +3.2] | −1.8 [−3.0, −0.6] |
+| DPO v2 BF16 − RFT v4 | pooled, GPT | +2.5 [+0.8, +4.1] | +3.4 [+2.2, +4.4] |
+| DPO v2 BF16 − RFT v4 | pooled, Sonnet | +2.7 [+1.0, +4.4] | +4.7 [+3.3, +6.1] |
+| DPO v2 served − DPO v2 BF16 | pooled, GPT | −0.5 [−1.8, +1.0] | +0.3 [−0.6, +1.2] |
+| RFT v4 − Haiku | pooled, GPT | −1.8 [−3.7, +0.1] | −3.2 [−4.4, −2.0] |
 | RFT v4 − Haiku | pooled, Sonnet | −1.3 [−3.2, +0.7] | −6.4 [−7.9, −5.0] |
 | RFT v4 − Haiku | set 1, GPT | −1.7 [−4.8, +1.5] | −2.9 [−5.1, −0.7] |
 | RFT v4 − Haiku | set 2, GPT | −1.9 [−4.2, +0.6] | −3.3 [−4.8, −1.9] |
@@ -233,19 +259,26 @@ per abstract here, RFT v4's 229.
 | RFT v5 − RFT v4 | pooled, GPT | −0.9 [−2.7, +0.9] | −0.6 [−1.9, +0.6] |
 | Opus − Haiku | set 2, GPT | +6.0 [+4.1, +7.9] | +2.7 [+1.5, +3.9] |
 
-On test set 1 alone the faithfulness interval was ±2.2 and the gap read as a near
-miss. Pooling brought it to ±1.2 and the top of the interval to −2.0: the gap is
-real and it is three points. The Sonnet faithfulness gap is twice the GPT one on
-every set; the adjudication in §4 is why GPT is the number we stand behind, and the
-Sonnet column stays so that the reader can see the disagreement.
+For RFT v4, test set 1 alone gave a faithfulness interval of ±2.2 and a near miss;
+pooling brought it to ±1.2 with the top at −2.0, a real three-point gap. DPO v2
+closed it under GPT on both sets and pooled, with every interval inside the two-point
+rule. Under Sonnet the faithfulness gap is 1.8 points with the interval clear of zero,
+on both sets. The two graders disagree by 2.5 points on DPO v2 and by 0.4 on Haiku;
+the adjudication in §4 is why GPT is the number we stand behind, and the Sonnet
+column stays so that the reader can see the disagreement. One reading of it: Sonnet
+is stricter on exactly the dropped conditions and hedges the pairs were built from,
+and the model has not fully learned them. Another: the pairs were selected by Sonnet,
+so the model moved toward what Sonnet rewards and Sonnet still finds more to flag. We
+cannot separate these with the graders we have.
 
-Quantizing RFT v2 to NVFP4 cost −2.1 [−5.6, +1.4] / −0.8 [−4.0, +2.6] recall and
-−1.1 [−3.7, +1.4] / +2.2 [−0.5, +5.0] faithfulness: within noise. Served against
-stock Lightning, faithfulness is up 13.9 / 21.8 points and recall +2.3 / +2.3. The
-served cost is the endpoint's hourly price over its sustained throughput (17,800
-abstracts an hour at 64 concurrent requests); idle, the endpoint still bills about
-$63 a day. RFT v4 was not exported or served; on BF16 it is 1.8 / 1.9 points more
-recall and 1.1 / 1.9 more faithfulness than RFT v2 (test set 1).
+Quantizing DPO v2 to NVFP4 cost −0.5 [−1.8, +1.0] / −0.3 [−1.6, +1.2] recall and
++0.3 [−0.6, +1.2] / +0.0 [−1.0, +1.1] faithfulness, pooled: nothing measurable, as for
+RFT v2 before it (−2.1 / −0.8 recall, −1.1 / +2.2 faithfulness on test set 1, all
+within noise). The served cost is the endpoint's hourly price over its sustained
+throughput (17,400 abstracts an hour at 64 concurrent requests, 17,800 for RFT v2);
+idle, the endpoint still bills about $63 a day. The cost per abstract did not change
+between RFT v2 and DPO v2 because output length did not (223 against 231 / 244
+tokens).
 
 ## 8. The teacher's ceiling, and a preference round
 
@@ -284,31 +317,82 @@ loss steady) and fixed invented findings, but lost recall −5.5 [−9.9, −1.1
   more, and rejected samples from an earlier model, which are easy to push down without
   learning what made them wrong.
 
-A second preference round would draw rejected samples from the model itself, keep
-only unfaithfulness pairs, and hold no-findings pairs near 6%. The RFT v4 and v5
-rounds produced exactly those pairs (472, in the package as `pairs.jsonl`); it was
-not run (§9).
+**A second preference round from RFT v4, on minimal pairs.** The RFT v4 and v5 rounds
+had left 472 pairs (`pairs.jsonl`) in which the chosen answer passed both judges and
+the rejected one failed Sonnet on faithfulness. Read closely, those pairs differ in
+everything at once: two whole answers to the same abstract, different in wording,
+length and which findings they pick, with the one unfaithful fact somewhere inside.
+A model pushed apart on such pairs learns whatever separates them, not the fact. So
+the round was built differently:
 
-## 9. Where we stopped, and why
+- **Minimal pairs.** The rejected answer is the chosen answer with exactly one field
+  (`about`, finding 1 or finding 2) replaced by the flagged version from a sample of
+  the model's own. Everything else is identical, so the preference signal is the one
+  fact.
+- **More flags, replicated.** Sonnet graded the 5,403 RFT v4 samples the selector had
+  never judged (it stops at the first sample that passes), then graded every flagged
+  fact a second time with fewer facts in context. A flag was kept only if it
+  replicated: 1,640 of 2,522 did (65%), close to our own reading of a 72-flag sample,
+  in which 64% looked real. Kimi K3 was not used as the second judge: it passes 76% of
+  real overstatements (§6), so it would have discarded the signal with the noise.
+- **Lost qualifiers, written on purpose.** Flags under-represent the slip the graders
+  charge for most, a dropped condition or hedge, because such facts often read as
+  supported. Kimi K3 took 540 chosen findings and rewrote each dropping one qualifier
+  the abstract attaches (a condition, population, hedge, non-significance or scope);
+  408 edits passed the filters (the removed phrase present in the original, the edit
+  shorter and close to it, not truncated). The chosen side is unchanged; the teacher
+  wrote the negative.
+- **No no-findings pairs**, after what they did in the first round.
 
-RFT v4 is the model. After RFT v5 we considered what else might close the three-point
-faithfulness gap, with our own odds of reaching within two points of Haiku under GPT:
+1,667 pairs on 751 abstracts (979 from RFT v4's samples, 280 from RFT v3's, 408
+Kimi edits): one epoch from RFT v4, β 0.1, plus the chosen answer's own loss, the first
+round's recipe. The bar and the reading of the result were fixed before training:
+within two points of Haiku on both measures, pooled under GPT, with invented findings
+not above RFT v4's, is a pass; a faithfulness gain over RFT v4 with its interval clear
+of zero and recall not down more than a point is a gain; anything else fails and no
+second run follows. Our odds beforehand: pass about 35%, gain-not-pass 25%, fail 40%.
 
-- A preference round on the 472 unfaithfulness pairs, as §8 describes: about one in
-  three, given what the first preference round did.
-- A one-claim-per-fact constraint on selection, since any one slip condemns a packed
-  fact: about one in four.
-- A prompt instruction at inference to keep the authors' hedging: about one in five,
-  and it changes the pre-registered prompt.
-- GPT-6.1 as the faithfulness signal in selection: the strongest signal, and barred,
-  since it is the primary grader.
+| Model | Findings recall | Faithfulness | Overstated | Invented (of 74 pooled) |
+| --- | --- | --- | --- | --- |
+| RFT v4, BF16 | 88.0 / 87.6 | 91.8 / 88.2 | 5.7% / 11.0% | 45 |
+| DPO v2, BF16 | 90.5 / 90.3 | 95.1 / 92.9 | 3.0% / 6.5% | 38 |
+| Haiku 5.5 | 89.8 / 88.9 | 95.0 / 94.6 | 3.2% / 5.1% | 9 |
 
-None above even odds, so none was run. A third test set would not change the
-answer either: the pooled faithfulness interval is already ±1.2 around −3.2, and
-doubling the sample would narrow it to about ±0.9 without moving it inside the rule.
-What remains uncertain is how strict the grader is: of 14 of RFT v4's overstated
-verdicts we read, about 3 looked supported to us. That strictness sits under Haiku's
-number as much as ours, and we have not measured it beyond that reading.
+It passed and it is a gain: +3.4 [+2.2, +4.4] / +4.7 [+3.3, +6.1] faithfulness and
++2.5 [+0.8, +4.1] / +2.7 [+1.0, +4.4] recall over RFT v4, pooled. What moved is what
+the pairs targeted: GPT's overstated rate fell from 5.7% to 3.0%, unsupported barely
+changed, and recall rose rather than fell. Invented findings did not move, since no
+pair taught "say nothing". The loss fell smoothly over 105 steps; one run, one seed.
+Scripts: `training/pairs/`; data: `sets/abstracts-train/runs/dpo2-pairs/` and
+`rft4-samples/grades.faith_rest.jsonl` in the package.
+
+## 9. Where we stopped, and what remains
+
+DPO v2, served as NVFP4, is the model. After RFT v5 we had considered what might close
+the three-point faithfulness gap, with our own odds of reaching within two points of
+Haiku under GPT: a preference round on the 472 pairs as they stood (about one in
+three, given the first round), a one-claim-per-fact constraint on selection (one in
+four), a prompt instruction to keep the authors' hedging (one in five, and it changes
+the pre-registered prompt), and GPT-6.1 as the selection signal (the strongest, and
+barred as the primary grader). None was above even odds and we stopped. Reading the
+472 pairs is what changed the odds: the pairs were the problem, not the method, and
+rebuilding them as minimal pairs with the rest of the sample pool is what ran (§8),
+with its bar fixed beforehand. It ran once; we did not try a second seed, a second
+epoch or a larger file, and the result is one run.
+
+What remains:
+
+- **Invented findings.** The model states a finding for 47 of the 74 abstracts whose
+  key has none; Haiku for 9. The fix is known (no-findings rows, §6) and it costs
+  recall in the forms we tried.
+- **The Sonnet column.** Sonnet grades the final model 1.8 points below Haiku on
+  faithfulness with the interval clear of zero; GPT grades them level. Of 14 of
+  RFT v4's overstated verdicts we read, about 3 looked supported to us, and that
+  strictness sits under Haiku's number as much as ours; we have not measured it beyond
+  that reading, and Sonnet's strictness is the thing the training signal was built
+  from.
+- **One run.** The pre-registered bar was met on both test sets, but by a model trained
+  once, from one seed, with no held-out dev set for the recipe itself.
 
 ## What we learned
 
@@ -326,6 +410,10 @@ number as much as ours, and we have not measured it beyond that reading.
   point and turned a near miss into a measured gap.
 - **Thinking buys faithfulness at a price.** It's the one prompt-side lever that
   worked for stock Lightning, and the fine-tune reaches the same level without it.
+- **A preference pair should differ in one thing.** Whole-answer pairs taught the
+  first preference round to say nothing; pairs that differ in one fact taught the
+  second what an overstatement is, and recall came along. Reading the pairs before
+  training on them is what told the two apart.
 
 ## Spend
 
@@ -334,4 +422,6 @@ training through RFT v2: teacher targets, three training rounds, sampling, open-
 grading, evaluations with both graders, the NVFP4 export and the served measurement.
 The teacher's ceiling and the preference round (§8) cost about $30 more. RFT v3 and the
 study of which judges see overstatement, about $70; RFT v4, $59; RFT v5 and the second
-test set with its five runs, $122. About $515 in all.
+test set with its five runs, $122. The minimal-pair preference round, $117: $49 to
+grade the sample pool, replicate the flags and write the edits, $53 to train and
+evaluate, $16 to export, serve and grade the served model. About $630 in all.
