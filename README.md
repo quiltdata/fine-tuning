@@ -35,7 +35,7 @@ abstracts and stalled three points short of the bar, Claude Haiku 5.5 at 90% / 9
 A preference round on minimal pairs (each pair differs in one fact) then took it to
 **90% / 95%**: level with Haiku on both measures, every interval inside the two-point
 rule. Sonnet 5.5, the second grader, still scores its faithfulness 1.8 points below
-Haiku, and it invents findings on no-result abstracts five times as often. Served in
+Haiku, and it mischaracterizes non-results as findings five times as often. Served in
 4-bit on one GPU it costs a measured **$0.0141 per 100 abstracts**, 42% of Haiku.
 Details in [`ABSTRACTS.md`](ABSTRACTS.md).
 

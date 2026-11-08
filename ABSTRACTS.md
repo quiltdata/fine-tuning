@@ -33,7 +33,7 @@ every grader verdict are in the public package
   set made it more cautious and cost recall. Turning thinking on helped faithfulness,
   at about 45 times the output tokens; the fine-tune without thinking now beats stock
   Lightning with thinking on, at about 2% of its output tokens.
-- **Invented findings are the gap that remains.** The fine-tune states a finding for
+- **Mischaracterized findings are the gap that remains.** The fine-tune states a finding for
   about half the abstracts whose key has none (Haiku: a fifth), and the final model
   still does (47 of 74 pooled, Haiku 9). Ninety no-findings training rows (RFT v5)
   brought that down to Haiku's rate and cost about a point of recall; the first
@@ -117,8 +117,12 @@ from Kimi's answers and its own.
   the primary grader and Sonnet is reported beside it. The decision and the
   adjudication are public in `quilt+s3://quilt-ai#package=evals/abstract-faithfulness-check`.
   Numbers below are **GPT / Sonnet**.
-- **Invented findings:** of the abstracts whose key has no findings (19 in test set 1,
-  55 in test set 2), how many got one anyway.
+- **Mischaracterized findings:** of the abstracts whose key has no findings (19 in test set 1,
+  55 in test set 2), how many got one anyway. The model has put something in the results slot
+  of a paper that reports no result: usually a fact the paper does state (its aim, its method,
+  what a resource contains) presented as a finding, sometimes nothing the paper says. The
+  score files call this `invented_findings`; that name overstates it, and this page uses
+  "mischaracterized". A blind page in the evals package asks a reader which kind each is.
 - **The bar:** at or above Haiku 5.5 on recall and faithfulness; Opus 5.5 is the
   stretch. Differences under about two points count as ties.
 - **Gaps** between models are paired bootstraps over abstracts, with 95% intervals.
@@ -133,7 +137,7 @@ worked examples, quote-before-fact).
 - **Every change cost recall,** 6 to 24 points. More rules made Lightning say less.
 - **Quoting first** (the model copies its support before restating it) hurt most.
 - **Thinking was the one lever that worked:** 5–8 points of faithfulness and no
-  invented findings on dev, recall unchanged, at about 40 times the tokens.
+  mischaracterized findings on dev, recall unchanged, at about 40 times the tokens.
 
 So the stock baseline uses the published prompt, and stock-with-thinking is reported
 as the best-effort stock arm at its real token cost.
@@ -149,7 +153,7 @@ sample that passes both becomes the target, otherwise the teacher's answer stays
 the abstract is dropped if the teacher's answer fails too. One epoch from the previous
 model's adapter, lr 5e-5.
 
-| Round | What it trained on | Findings recall | Faithfulness | Invented (of 19) |
+| Round | What it trained on | Findings recall | Faithfulness | Mischaracterized (of 19) |
 | --- | --- | --- | --- | --- |
 | **SFT v2** | Kimi's 1,145 code-filtered answers, from the base model | 82.8 / 82.8 | 85.5 / 81.5 | 9 |
 | **RFT v1** | Samples from SFT v2, Kimi grading capped at $20 (569 abstracts graded, 524 own answers) | 85.1 / 84.7 | 87.6 / 83.7 | 7 |
@@ -170,7 +174,7 @@ moved for the first time: +1.8 [−0.4, +3.9] / +3.3 [+0.7, +6.0] over RFT v3 on
 set 1, and +1.7 [+0.1, +3.2] under GPT on test set 2. The overstated rate fell from
 6.7% to 5.7% (GPT). RFT v5 repeated the recipe and gained nothing: −1.8 [−4.0, +0.5] /
 +0.2 faithfulness and −1.1 / −0.4 recall against RFT v4 on test set 1, +0.0 / −0.3 and
-−0.9 / −0.2 on test set 2. Its no-findings rows did what they were for: it invented
+−0.9 / −0.2 on test set 2. Its no-findings rows did what they were for: it mischaracterized
 findings on 4 of 19 and 16 of 55 no-result abstracts, against 10 and 35 for RFT v4
 and 4 and 5 for Haiku.
 
@@ -192,7 +196,7 @@ set 1; Claude costs are on-demand Bedrock prices with the instructions cached.
 
 ### Test set 1 (306 abstracts)
 
-| Model | Valid | Findings recall | Faithfulness | Invented (of 19) | Output tokens | $ per 100 abstracts |
+| Model | Valid | Findings recall | Faithfulness | Mischaracterized (of 19) | Output tokens | $ per 100 abstracts |
 | --- | --- | --- | --- | --- | --- | --- |
 | Claude Opus 5.5 (stretch) | 290 | 91.3 / 91.1 | 96.5 / 95.5 | 4 | 394 | $1.22 |
 | **Claude Haiku 5.5 (bar)** | 306 | **90.9 / 89.6** | **94.9 / 94.6** | 4 | 425 | $0.034 |
@@ -212,7 +216,7 @@ file-summary fine-tune and the earlier served measurements are in the package.)
 
 ### Test set 2 (629 abstracts)
 
-| Model | Findings recall | Faithfulness | Invented (of 55) |
+| Model | Findings recall | Faithfulness | Mischaracterized (of 55) |
 | --- | --- | --- | --- |
 | Claude Opus 5.5 (stretch) | 95.2 / 94.8 | 97.7 / 96.1 | — |
 | **Claude Haiku 5.5 (bar)** | **89.3 / 88.5** | **95.0 / 94.7** | 5 |
@@ -285,7 +289,7 @@ tokens).
 **The teacher on the test set.** Kimi K3 wrote its own key for each test abstract and
 answered with it in view, exactly as it made the training targets (run
 `kimi-k3-teacher-single`): **95.8 / 93.6** recall, **95.5 / 92.0** faithfulness, 6
-invented, 304 valid. Against Haiku: recall +4.9 [+1.9, +8.0] / +4.0 [+0.7, +7.3],
+mischaracterized, 304 valid. Against Haiku: recall +4.9 [+1.9, +8.0] / +4.0 [+0.7, +7.3],
 faithfulness +0.5 [−1.2, +2.4] / −2.6 [−4.8, −0.4]. So the student's recall gap and its
 GPT faithfulness gap are its own. About 2.6 of its Sonnet faithfulness gap comes from
 the teacher; imitating Kimi more closely can't close that column.
@@ -298,13 +302,13 @@ answer-only loss on the chosen answer (`train.py --dpo_beta`):
 - 127 pairs on 71 new PMC abstracts whose Kimi key has no findings: chosen, Kimi's empty
   answer; rejected, an RFT v2 sample that states a finding.
 
-| Model | Findings recall | Faithfulness | Invented (of 19) | Empty answers where the key has findings |
+| Model | Findings recall | Faithfulness | Mischaracterized (of 19) | Empty answers where the key has findings |
 | --- | --- | --- | --- | --- |
 | RFT v2, BF16 | 87.4 / 86.4 | 90.9 / 86.3 | 9 | 5 |
 | DPO from RFT v2, BF16 | 81.9 / 81.3 | 84.0 / 77.6 | **0** | 38 |
 
 It trained as intended (preference accuracy from about 0.2 to 0.8, the chosen answers'
-loss steady) and fixed invented findings, but lost recall −5.5 [−9.9, −1.1] /
+loss steady) and fixed mischaracterized findings, but lost recall −5.5 [−9.9, −1.1] /
 −5.1 [−9.3, −0.9] and faithfulness −6.9 [−9.7, −3.8] / −8.6 [−11.9, −5.5] against RFT v2:
 
 - **It overcorrected to "no findings":** empty answers for 38 abstracts that have
@@ -347,12 +351,12 @@ the round was built differently:
 1,667 pairs on 751 abstracts (979 from RFT v4's samples, 280 from RFT v3's, 408
 Kimi edits): one epoch from RFT v4, β 0.1, plus the chosen answer's own loss, the first
 round's recipe. The bar and the reading of the result were fixed before training:
-within two points of Haiku on both measures, pooled under GPT, with invented findings
+within two points of Haiku on both measures, pooled under GPT, with mischaracterized findings
 not above RFT v4's, is a pass; a faithfulness gain over RFT v4 with its interval clear
 of zero and recall not down more than a point is a gain; anything else fails and no
 second run follows. Our odds beforehand: pass about 35%, gain-not-pass 25%, fail 40%.
 
-| Model | Findings recall | Faithfulness | Overstated | Invented (of 74 pooled) |
+| Model | Findings recall | Faithfulness | Overstated | Mischaracterized (of 74 pooled) |
 | --- | --- | --- | --- | --- |
 | RFT v4, BF16 | 88.0 / 87.6 | 91.8 / 88.2 | 5.7% / 11.0% | 45 |
 | DPO v2, BF16 | 90.5 / 90.3 | 95.1 / 92.9 | 3.0% / 6.5% | 38 |
@@ -361,7 +365,7 @@ second run follows. Our odds beforehand: pass about 35%, gain-not-pass 25%, fail
 It passed and it is a gain: +3.4 [+2.2, +4.4] / +4.7 [+3.3, +6.1] faithfulness and
 +2.5 [+0.8, +4.1] / +2.7 [+1.0, +4.4] recall over RFT v4, pooled. What moved is what
 the pairs targeted: GPT's overstated rate fell from 5.7% to 3.0%, unsupported barely
-changed, and recall rose rather than fell. Invented findings did not move, since no
+changed, and recall rose rather than fell. Mischaracterized findings did not move, since no
 pair taught "say nothing". The loss fell smoothly over 105 steps; one run, one seed.
 Scripts: `training/pairs/`; data: `sets/abstracts-train/runs/dpo2-pairs/` and
 `rft4-samples/grades.faith_rest.jsonl` in the package.
@@ -382,7 +386,7 @@ epoch or a larger file, and the result is one run.
 
 What remains:
 
-- **Invented findings.** The model states a finding for 47 of the 74 abstracts whose
+- **Mischaracterized findings.** The model states a finding for 47 of the 74 abstracts whose
   key has none; Haiku for 9. The fix is known (no-findings rows, §6) and it costs
   recall in the forms we tried.
 - **The Sonnet column.** Sonnet grades the final model 1.8 points below Haiku on
